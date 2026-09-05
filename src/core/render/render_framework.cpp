@@ -9,6 +9,9 @@
 #include "core/render/renderer.hpp"
 #include "core/render/textures.hpp"
 #include "core/render/world.hpp"
+#include "core/render/streamline_context.hpp"
+#include "core/render/modules/world/frame_gen/frame_gen_manager.hpp"
+#include "core/render/modules/world/ray_tracing/ray_tracing_module.hpp"
 
 #include <iostream>
 #include <random>
@@ -156,7 +159,7 @@ void Framework::init(GLFWwindow *window) {
     swapchain_ = vk::Swapchain::create(physicalDevice_, device_, window_);
     mainCommandPool_ = vk::CommandPool::create(physicalDevice_, device_);
     asyncCommandPool_ = vk::CommandPool::create(physicalDevice_, device_, physicalDevice_->secondaryQueueIndex());
-    frameResourceRetainer_ = FrameResourceRetainer::create(shared_from_this());
+    frameResourceRetainer_ = FrameResourceRetainer::create(swapchain_->imageCount());
 
     uint32_t imageCount = swapchain_->imageCount();
 
@@ -176,6 +179,7 @@ void Framework::init(GLFWwindow *window) {
     for (int i = 0; i < imageCount; i++) { contexts_.push_back(FrameworkContext::create(shared_from_this(), i)); }
 
     pipeline_ = Pipeline::create(shared_from_this());
+    FrameGenManager::init();
 }
 
 Framework::~Framework() {
@@ -187,6 +191,19 @@ Framework::~Framework() {
 void Framework::acquireContext() {
     if (!running_) return;
 
+#ifdef _WIN32
+    reflexPacedFrame_ = false;
+    if (StreamlineContext::isAvailable()) {
+        StreamlineContext::advanceFrame();
+        const bool lowLatency = Renderer::options.reflexEnabled || FrameGenManager::isActive();
+        const uint32_t fps = effectiveFrameRateLimit();
+        const uint32_t limitUs = fps ? 1000000 / fps : 0;
+        StreamlineContext::setReflexOptions(lowLatency ? sl::ReflexMode::eLowLatency : sl::ReflexMode::eOff, limitUs);
+        const bool slept = StreamlineContext::reflexSleep();
+        reflexPacedFrame_ = lowLatency && slept;
+        StreamlineContext::pclSetMarker(sl::PCLMarker::eSimulationStart);
+    }
+#endif
     std::shared_ptr<FrameworkContext> lastContext;
     if (currentContext_) lastContext = currentContext_;
     VkResult result;
@@ -197,6 +214,7 @@ void Framework::acquireContext() {
                                    imageAcquiredSemaphore->vkSemaphore(), VK_NULL_HANDLE, &imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         recycleSemaphore(imageAcquiredSemaphore);
+        lastContext.reset(); // Release old swapchain image before teardown.
         recreate();
         return;
     } else if (result != VK_SUCCESS) {
@@ -212,6 +230,10 @@ void Framework::acquireContext() {
         std::cout << "vkWaitForFences failed with error: " << std::dec << result << std::endl;
         waitDeviceIdle();
         exit(EXIT_FAILURE);
+    }
+    // Present may finish before the FG queue has consumed this slot's images.
+    if (!FrameGenManager::waitForInputCompletion(imageIndex, device_->vkDevice(), 5000000000ull)) {
+        throw std::runtime_error("Frame generation input completion timed out; refusing to reuse live GPU resources");
     }
     currentContextIndex_ = imageIndex;
     currentContext_ = contexts_[imageIndex];
@@ -264,12 +286,34 @@ void Framework::submitCommand() {
 
     Renderer::instance().framework()->safeAcquireCurrentContext(); // ensure context is non nullptr
 
+#ifdef _WIN32
+    StreamlineContext::pclSetMarker(sl::PCLMarker::eSimulationEnd);
+#endif
+    const bool fgAllowed = Renderer::options.frameGenerationEnabled && Renderer::options.frameGenerationAllowed
+        && Renderer::instance().world()->shouldRender() && !vk::Window::framebufferResized
+        && !pipeline_->isRecreationNeeded && !Renderer::options.needRecreate;
+    FrameGenManager::configure(fgAllowed, 1);
+
     Renderer::instance().textures()->performQueuedUpload();
     Renderer::instance().buffers()->performQueuedUpload();
     Renderer::instance().buffers()->buildAndUploadOverlayUniformBuffer();
 
     auto pipelineContext = pipeline_->acquirePipelineContext(currentContext_);
     if (Renderer::instance().world()->shouldRender()) pipelineContext->worldPipelineContext->render();
+    if (FrameGenManager::isActive() && Renderer::instance().world()->shouldRender()) {
+        FrameGenManager::FrameInput input{};
+        input.context = currentContext_;
+        input.hudlessColor = pipelineContext->worldPipelineContext->outputImage;
+        for (const auto &module : pipelineContext->worldPipelineContext->worldModuleContexts) {
+            if (auto ray = std::dynamic_pointer_cast<RayTracingModuleContext>(module)) {
+                input.linearDepth = ray->linearDepthImage;
+                input.motionVectors = ray->motionVectorImage;
+                break;
+            }
+        }
+        input.world = *static_cast<vk::Data::WorldUBO *>(Renderer::instance().buffers()->worldUniformBuffer()->mappedPtr());
+        if (!FrameGenManager::tagFrame(input)) FrameGenManager::configure(false);
+    }
     pipelineContext->uiModuleContext->end();
 
     currentContext_->fuseFinal();
@@ -301,7 +345,14 @@ void Framework::submitCommand() {
 
     std::shared_ptr<vk::Fence> fence = currentContext_->commandFinishedFence;
     vkResetFences(device_->vkDevice(), 1, &fence->vkFence());
-    vkQueueSubmit(device_->mainVkQueue(), 1, &vkSubmitInfo, fence->vkFence());
+#ifdef _WIN32
+    StreamlineContext::pclSetMarker(sl::PCLMarker::eRenderSubmitStart);
+#endif
+    const VkResult submitResult = vkQueueSubmit(device_->mainVkQueue(), 1, &vkSubmitInfo, fence->vkFence());
+#ifdef _WIN32
+    StreamlineContext::pclSetMarker(sl::PCLMarker::eRenderSubmitEnd);
+#endif
+    if (submitResult != VK_SUCCESS) throw std::runtime_error("Vulkan frame submission failed");
 }
 
 void Framework::present() {
@@ -316,10 +367,22 @@ void Framework::present() {
     presentInfo.pSwapchains = &swapchain_->vkSwapchain();
     presentInfo.pImageIndices = &currentContext_->frameIndex;
 
+#ifdef _WIN32
+    StreamlineContext::pclSetMarker(sl::PCLMarker::ePresentStart);
+#endif
     VkResult result = vkQueuePresentKHR(device_->mainVkQueue(), &presentInfo);
+#ifdef _WIN32
+    StreamlineContext::pclSetMarker(sl::PCLMarker::ePresentEnd);
+#endif
+    if (!FrameGenManager::captureInputCompletion(currentContext_->frameIndex)) {
+        FrameGenManager::configure(false);
+        if (!FrameGenManager::drainAfterDeviceIdle(device_->vkDevice())) {
+            throw std::runtime_error("Unable to drain frame generation inputs after present");
+        }
+    }
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || vk::Window::framebufferResized ||
-        Renderer::options.needRecreate || pipeline_->isRecreationNeeded) {
+        Renderer::options.needRecreate || pipeline_->isRecreationNeeded || FrameGenManager::needsSwapchainRecreate()) {
         recreate();
         return;
     } else if (result != VK_SUCCESS) {
@@ -328,7 +391,7 @@ void Framework::present() {
         exit(EXIT_FAILURE);
     }
 
-    limitFrameRate();
+    if (!reflexPacedFrame_) limitFrameRate();
 }
 
 uint32_t Framework::effectiveFrameRateLimit() const {
@@ -381,7 +444,13 @@ void Framework::recreate() {
         vk::Window::framebufferResized = false;
         pipeline_->isRecreationNeeded = false;
 
-        waitRenderQueueIdle();
+        if (!FrameGenManager::waitForAllInputCompletions(device_->vkDevice(), 5000000000ull)) {
+            throw std::runtime_error("Frame generation inputs are still live during swapchain recreation");
+        }
+        waitDeviceIdle();
+        if (!FrameGenManager::beforeSwapchainRecreate()) {
+            throw std::runtime_error("Frame generation swapchain teardown failed");
+        }
 
         int width = 0, height = 0;
         GLFW_GetFramebufferSize(window_->window(), &width, &height);
@@ -391,6 +460,7 @@ void Framework::recreate() {
         }
 
         currentContextIndex_ = 0;
+        indexHistory_ = {}; // Old swapchain indices cannot identify new screenshot frames.
         currentContext_ = nullptr;
         contexts_.clear();
 
@@ -401,9 +471,21 @@ void Framework::recreate() {
         commandFinishedFences_.clear();
         commandProcessedSemaphores_.clear();
 
+        // Destroy through the same SL plugin state that created the old swapchain.
+        // Only then load/unload FG and construct a new swapchain through its hooks.
+        if (StreamlineContext::isAvailable()) {
+            swapchain_->releaseForRecreation();
+            if (!FrameGenManager::prepareNewSwapchain()) {
+                throw std::runtime_error("Frame generation plugin transition failed");
+            }
+        }
         swapchain_->reconstruct();
 
         uint32_t size = swapchain_->imageCount();
+        // The old frame fences and FG timelines were drained above. New image
+        // counts may grow or shrink; reset before pipeline recreation retains
+        // resources or acquireContext indexes a newly created frame slot.
+        frameResourceRetainer_->resetAfterDeviceIdle(size);
 
         // create command buffer for each context
         for (int i = 0; i < size; i++) {
@@ -422,6 +504,7 @@ void Framework::recreate() {
         for (int i = 0; i < size; i++) { contexts_.push_back(FrameworkContext::create(shared_from_this(), i)); }
 
         pipeline_->recreate(shared_from_this());
+        FrameGenManager::afterSwapchainRecreate();
 
         Renderer::instance().textures()->bindAllTextures();
 
@@ -449,7 +532,18 @@ void Framework::waitBackendQueueIdle() {
 }
 
 void Framework::close() {
-    if (running_) { pipeline_->close(); }
+    if (running_) {
+        if (!FrameGenManager::waitForAllInputCompletions(device_->vkDevice(), 5000000000ull)
+            && !FrameGenManager::drainAfterDeviceIdle(device_->vkDevice())) {
+            throw std::runtime_error("Unable to drain frame generation before shutdown");
+        }
+        waitDeviceIdle();
+        if (!FrameGenManager::shutdown()) {
+            throw std::runtime_error("Frame generation shutdown failed");
+        }
+        pipeline_->close();
+        StreamlineContext::shutdown();
+    }
     running_ = false;
 }
 
@@ -646,15 +740,4 @@ std::shared_ptr<vk::Semaphore> Framework::acquireSemaphore() {
 
 void Framework::recycleSemaphore(std::shared_ptr<vk::Semaphore> semaphore) {
     recycledImageAcquiredSemaphores_.push(semaphore);
-}
-
-FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framework) {
-    retainedResourcesByFrame_.resize(framework->swapchain_->imageCount());
-}
-
-void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
-    std::unique_lock<std::recursive_mutex> lck(mtx_);
-
-    currentFrameIndex_ = frameIndex;
-    retainedResourcesByFrame_[currentFrameIndex_].clear();
 }

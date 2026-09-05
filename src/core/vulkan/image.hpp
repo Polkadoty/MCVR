@@ -232,6 +232,8 @@ class DeviceLocalImage : public Image, public SharedObject<DeviceLocalImage> {
     uint32_t layer() override;
     VkFormat &vkFormat() override;
     VkBuffer &vkStagingBuffer();
+    VkDeviceMemory vkDeviceMemory() const { return allocationInfo_.deviceMemory; }
+    VkImageUsageFlags usageFlags() const { return usage_; }
     VkImage &vkImage() override;
     VkImageView &vkImageView(int index = 0) override;
     VkImageLayout &imageLayout();

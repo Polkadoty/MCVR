@@ -1,6 +1,10 @@
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS "*.cpp")
 
 add_library(core SHARED ${SOURCE_FILES})
+target_include_directories(core PUBLIC "${PROJECT_SOURCE_DIR}/extern/streamline/include")
+if(WIN32)
+    target_link_libraries(core PRIVATE wintrust crypt32)
+endif()
 target_link_libraries(core PUBLIC ngx ${JNI_LIBRARIES} VulkanMemoryAllocator volk::volk glfw minizip tinyexpr
                                    nlohmann_json::nlohmann_json)
 

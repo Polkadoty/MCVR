@@ -3,6 +3,7 @@
 #include "core/render/emission.hpp"
 #include "core/render/renderer.hpp"
 #include "core/render/textures.hpp"
+#include "texture_proxy_errors.hpp"
 
 extern "C" {
 JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_generateTextureId(JNIEnv *, jclass) {
@@ -14,33 +15,39 @@ JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_genera
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_prepareImage(
-    JNIEnv *, jclass, jint id, jint maxLevel, jint width, jint height, jint format) {
-    auto textures = Renderer::instance().textures();
-    if (textures == nullptr) return;
-    auto vkFormat = static_cast<VkFormat>(format);
-    textures->initializeTexture(id, maxLevel, width, height, vkFormat);
-    if (auto emission = textures->emission(); emission != nullptr) {
-        emission->resetTexture(static_cast<uint32_t>(id));
-    }
+    JNIEnv *env, jclass, jint id, jint maxLevel, jint width, jint height, jint format) {
+    texture_proxy::guardUpdate(env, [&] {
+        auto textures = Renderer::instance().textures();
+        if (textures == nullptr) return;
+        auto vkFormat = static_cast<VkFormat>(format);
+        textures->initializeTexture(id, maxLevel, width, height, vkFormat);
+        if (auto emission = textures->emission(); emission != nullptr) {
+            emission->resetTexture(static_cast<uint32_t>(id));
+        }
+    });
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_setFilter(
-    JNIEnv *, jclass, jint id, jint samplingMode, jint mipmapMode) {
-    auto textures = Renderer::instance().textures();
-    if (textures == nullptr) return;
-    auto vkSamplingMode = static_cast<VkFilter>(samplingMode);
-    auto vkMipmapMode = static_cast<VkSamplerMipmapMode>(mipmapMode);
-    textures->setSamplingMode(id, vkSamplingMode, vkMipmapMode);
+    JNIEnv *env, jclass, jint id, jint samplingMode, jint mipmapMode) {
+    texture_proxy::guardUpdate(env, [&] {
+        auto textures = Renderer::instance().textures();
+        if (textures == nullptr) return;
+        auto vkSamplingMode = static_cast<VkFilter>(samplingMode);
+        auto vkMipmapMode = static_cast<VkSamplerMipmapMode>(mipmapMode);
+        textures->setSamplingMode(id, vkSamplingMode, vkMipmapMode);
+    });
 }
 
-JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_setClamp(JNIEnv *,
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_setClamp(JNIEnv *env,
                                                                                    jclass,
                                                                                    jint id,
                                                                                    jint addressMode) {
-    auto textures = Renderer::instance().textures();
-    if (textures == nullptr) return;
-    auto vkSamplerAddressMode = static_cast<VkSamplerAddressMode>(addressMode);
-    textures->setAddressMode(id, vkSamplerAddressMode);
+    texture_proxy::guardUpdate(env, [&] {
+        auto textures = Renderer::instance().textures();
+        if (textures == nullptr) return;
+        auto vkSamplerAddressMode = static_cast<VkSamplerAddressMode>(addressMode);
+        textures->setAddressMode(id, vkSamplerAddressMode);
+    });
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_queueUpload(JNIEnv *,

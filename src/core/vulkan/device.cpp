@@ -1,4 +1,5 @@
 #include "core/vulkan/device.hpp"
+#include "core/render/streamline_context.hpp"
 
 #include "core/render/modules/world/dlss/dlss_wrapper.hpp"
 #include "core/render/modules/world/xess_upscaler/xess_wrapper.hpp"
@@ -85,6 +86,10 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
     }
 #endif
 
+    for (const auto &extension : StreamlineContext::getRequiredDeviceExtensions()) {
+        enabledExtensions.push_back(extension.c_str());
+    }
+
     uint32_t deviceExtensionCount = 0;
     vkEnumerateDeviceExtensionProperties(physicalDevice_->vkPhysicalDevice(), nullptr, &deviceExtensionCount, nullptr);
     std::vector<VkExtensionProperties> deviceExtensions(deviceExtensionCount);
@@ -109,6 +114,10 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
         }
         return true;
     };
+
+    if (!areRequiredExtensionsSupported(StreamlineContext::getRequiredDeviceExtensions())) {
+        StreamlineContext::invalidateRequirements("Required Vulkan device extension unavailable");
+    }
 
     dlssDeviceExtensionsCompatible_ = instance_->isDlssInstanceExtensionsCompatible() && dlssRequirementQuerySuccess &&
                                       areRequiredExtensionsSupported(dlssRequiredExtensions);
@@ -284,6 +293,7 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
         supportedVulkan12.descriptorBindingStorageImageUpdateAfterBind;
     vulkan12Features.descriptorBindingStorageBufferUpdateAfterBind =
         supportedVulkan12.descriptorBindingStorageBufferUpdateAfterBind;
+    vulkan12Features.timelineSemaphore = supportedVulkan12.timelineSemaphore;
     vulkan12Features.shaderFloat16 = supportedVulkan12.shaderFloat16;
     vulkan12Features.shaderBufferInt64Atomics = supportedVulkan12.shaderBufferInt64Atomics;
     vulkan12Features.shaderStorageBufferArrayNonUniformIndexing =
@@ -292,6 +302,325 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
         supportedVulkan12.shaderStorageImageArrayNonUniformIndexing;
     vulkan12Features.shaderUniformBufferArrayNonUniformIndexing =
         supportedVulkan12.shaderUniformBufferArrayNonUniformIndexing;
+
+    for (const auto &name : StreamlineContext::getRequiredVulkan12Features()) {
+        bool recognized = false;
+        if (name == "samplerMirrorClampToEdge") {
+            recognized = true;
+            if (supportedVulkan12.samplerMirrorClampToEdge) vulkan12Features.samplerMirrorClampToEdge = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "drawIndirectCount") {
+            recognized = true;
+            if (supportedVulkan12.drawIndirectCount) vulkan12Features.drawIndirectCount = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "storageBuffer8BitAccess") {
+            recognized = true;
+            if (supportedVulkan12.storageBuffer8BitAccess) vulkan12Features.storageBuffer8BitAccess = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "uniformAndStorageBuffer8BitAccess") {
+            recognized = true;
+            if (supportedVulkan12.uniformAndStorageBuffer8BitAccess) vulkan12Features.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "storagePushConstant8") {
+            recognized = true;
+            if (supportedVulkan12.storagePushConstant8) vulkan12Features.storagePushConstant8 = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderBufferInt64Atomics") {
+            recognized = true;
+            if (supportedVulkan12.shaderBufferInt64Atomics) vulkan12Features.shaderBufferInt64Atomics = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderSharedInt64Atomics") {
+            recognized = true;
+            if (supportedVulkan12.shaderSharedInt64Atomics) vulkan12Features.shaderSharedInt64Atomics = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderFloat16") {
+            recognized = true;
+            if (supportedVulkan12.shaderFloat16) vulkan12Features.shaderFloat16 = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderInt8") {
+            recognized = true;
+            if (supportedVulkan12.shaderInt8) vulkan12Features.shaderInt8 = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorIndexing") {
+            recognized = true;
+            if (supportedVulkan12.descriptorIndexing) vulkan12Features.descriptorIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderInputAttachmentArrayDynamicIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderInputAttachmentArrayDynamicIndexing) vulkan12Features.shaderInputAttachmentArrayDynamicIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderUniformTexelBufferArrayDynamicIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderUniformTexelBufferArrayDynamicIndexing) vulkan12Features.shaderUniformTexelBufferArrayDynamicIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderStorageTexelBufferArrayDynamicIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderStorageTexelBufferArrayDynamicIndexing) vulkan12Features.shaderStorageTexelBufferArrayDynamicIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderUniformBufferArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderUniformBufferArrayNonUniformIndexing) vulkan12Features.shaderUniformBufferArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderSampledImageArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderSampledImageArrayNonUniformIndexing) vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderStorageBufferArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderStorageBufferArrayNonUniformIndexing) vulkan12Features.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderStorageImageArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderStorageImageArrayNonUniformIndexing) vulkan12Features.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderInputAttachmentArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderInputAttachmentArrayNonUniformIndexing) vulkan12Features.shaderInputAttachmentArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderUniformTexelBufferArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderUniformTexelBufferArrayNonUniformIndexing) vulkan12Features.shaderUniformTexelBufferArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderStorageTexelBufferArrayNonUniformIndexing") {
+            recognized = true;
+            if (supportedVulkan12.shaderStorageTexelBufferArrayNonUniformIndexing) vulkan12Features.shaderStorageTexelBufferArrayNonUniformIndexing = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingUniformBufferUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingUniformBufferUpdateAfterBind) vulkan12Features.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingSampledImageUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingSampledImageUpdateAfterBind) vulkan12Features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingStorageImageUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingStorageImageUpdateAfterBind) vulkan12Features.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingStorageBufferUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingStorageBufferUpdateAfterBind) vulkan12Features.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingUniformTexelBufferUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingUniformTexelBufferUpdateAfterBind) vulkan12Features.descriptorBindingUniformTexelBufferUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingStorageTexelBufferUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingStorageTexelBufferUpdateAfterBind) vulkan12Features.descriptorBindingStorageTexelBufferUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingUpdateUnusedWhilePending") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingUpdateUnusedWhilePending) vulkan12Features.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingPartiallyBound") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingPartiallyBound) vulkan12Features.descriptorBindingPartiallyBound = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "descriptorBindingVariableDescriptorCount") {
+            recognized = true;
+            if (supportedVulkan12.descriptorBindingVariableDescriptorCount) vulkan12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "runtimeDescriptorArray") {
+            recognized = true;
+            if (supportedVulkan12.runtimeDescriptorArray) vulkan12Features.runtimeDescriptorArray = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "samplerFilterMinmax") {
+            recognized = true;
+            if (supportedVulkan12.samplerFilterMinmax) vulkan12Features.samplerFilterMinmax = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "scalarBlockLayout") {
+            recognized = true;
+            if (supportedVulkan12.scalarBlockLayout) vulkan12Features.scalarBlockLayout = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "imagelessFramebuffer") {
+            recognized = true;
+            if (supportedVulkan12.imagelessFramebuffer) vulkan12Features.imagelessFramebuffer = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "uniformBufferStandardLayout") {
+            recognized = true;
+            if (supportedVulkan12.uniformBufferStandardLayout) vulkan12Features.uniformBufferStandardLayout = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderSubgroupExtendedTypes") {
+            recognized = true;
+            if (supportedVulkan12.shaderSubgroupExtendedTypes) vulkan12Features.shaderSubgroupExtendedTypes = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "separateDepthStencilLayouts") {
+            recognized = true;
+            if (supportedVulkan12.separateDepthStencilLayouts) vulkan12Features.separateDepthStencilLayouts = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "hostQueryReset") {
+            recognized = true;
+            if (supportedVulkan12.hostQueryReset) vulkan12Features.hostQueryReset = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "timelineSemaphore") {
+            recognized = true;
+            if (supportedVulkan12.timelineSemaphore) vulkan12Features.timelineSemaphore = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "bufferDeviceAddress") {
+            recognized = true;
+            if (supportedVulkan12.bufferDeviceAddress) vulkan12Features.bufferDeviceAddress = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "bufferDeviceAddressCaptureReplay") {
+            recognized = true;
+            if (supportedVulkan12.bufferDeviceAddressCaptureReplay) vulkan12Features.bufferDeviceAddressCaptureReplay = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "bufferDeviceAddressMultiDevice") {
+            recognized = true;
+            if (supportedVulkan12.bufferDeviceAddressMultiDevice) vulkan12Features.bufferDeviceAddressMultiDevice = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "vulkanMemoryModel") {
+            recognized = true;
+            if (supportedVulkan12.vulkanMemoryModel) vulkan12Features.vulkanMemoryModel = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "vulkanMemoryModelDeviceScope") {
+            recognized = true;
+            if (supportedVulkan12.vulkanMemoryModelDeviceScope) vulkan12Features.vulkanMemoryModelDeviceScope = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "vulkanMemoryModelAvailabilityVisibilityChains") {
+            recognized = true;
+            if (supportedVulkan12.vulkanMemoryModelAvailabilityVisibilityChains) vulkan12Features.vulkanMemoryModelAvailabilityVisibilityChains = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderOutputViewportIndex") {
+            recognized = true;
+            if (supportedVulkan12.shaderOutputViewportIndex) vulkan12Features.shaderOutputViewportIndex = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "shaderOutputLayer") {
+            recognized = true;
+            if (supportedVulkan12.shaderOutputLayer) vulkan12Features.shaderOutputLayer = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (name == "subgroupBroadcastDynamicId") {
+            recognized = true;
+            if (supportedVulkan12.subgroupBroadcastDynamicId) vulkan12Features.subgroupBroadcastDynamicId = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 12 feature: " + name);
+        }
+        if (!recognized) StreamlineContext::invalidateRequirements("Unknown Vulkan 12 feature: " + name);
+    }
+    for (const auto &name : StreamlineContext::getRequiredVulkan13Features()) {
+        bool recognized = false;
+        if (name == "robustImageAccess") {
+            recognized = true;
+            if (supportedVulkan13.robustImageAccess) vulkan13Features.robustImageAccess = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "inlineUniformBlock") {
+            recognized = true;
+            if (supportedVulkan13.inlineUniformBlock) vulkan13Features.inlineUniformBlock = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "descriptorBindingInlineUniformBlockUpdateAfterBind") {
+            recognized = true;
+            if (supportedVulkan13.descriptorBindingInlineUniformBlockUpdateAfterBind) vulkan13Features.descriptorBindingInlineUniformBlockUpdateAfterBind = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "pipelineCreationCacheControl") {
+            recognized = true;
+            if (supportedVulkan13.pipelineCreationCacheControl) vulkan13Features.pipelineCreationCacheControl = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "privateData") {
+            recognized = true;
+            if (supportedVulkan13.privateData) vulkan13Features.privateData = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "shaderDemoteToHelperInvocation") {
+            recognized = true;
+            if (supportedVulkan13.shaderDemoteToHelperInvocation) vulkan13Features.shaderDemoteToHelperInvocation = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "shaderTerminateInvocation") {
+            recognized = true;
+            if (supportedVulkan13.shaderTerminateInvocation) vulkan13Features.shaderTerminateInvocation = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "subgroupSizeControl") {
+            recognized = true;
+            if (supportedVulkan13.subgroupSizeControl) vulkan13Features.subgroupSizeControl = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "computeFullSubgroups") {
+            recognized = true;
+            if (supportedVulkan13.computeFullSubgroups) vulkan13Features.computeFullSubgroups = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "synchronization2") {
+            recognized = true;
+            if (supportedVulkan13.synchronization2) vulkan13Features.synchronization2 = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "textureCompressionASTC_HDR") {
+            recognized = true;
+            if (supportedVulkan13.textureCompressionASTC_HDR) vulkan13Features.textureCompressionASTC_HDR = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "shaderZeroInitializeWorkgroupMemory") {
+            recognized = true;
+            if (supportedVulkan13.shaderZeroInitializeWorkgroupMemory) vulkan13Features.shaderZeroInitializeWorkgroupMemory = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "dynamicRendering") {
+            recognized = true;
+            if (supportedVulkan13.dynamicRendering) vulkan13Features.dynamicRendering = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "shaderIntegerDotProduct") {
+            recognized = true;
+            if (supportedVulkan13.shaderIntegerDotProduct) vulkan13Features.shaderIntegerDotProduct = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (name == "maintenance4") {
+            recognized = true;
+            if (supportedVulkan13.maintenance4) vulkan13Features.maintenance4 = VK_TRUE;
+            else StreamlineContext::invalidateRequirements("Unsupported Vulkan 13 feature: " + name);
+        }
+        if (!recognized) StreamlineContext::invalidateRequirements("Unknown Vulkan 13 feature: " + name);
+    }
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures = {};
     accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
@@ -339,6 +668,9 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
     }
 #endif
 
+    auto slCreateDevice = reinterpret_cast<PFN_vkCreateDevice>(StreamlineContext::getVkCreateDevice());
+    PFN_vkCreateDevice createDeviceFn = slCreateDevice ? slCreateDevice : vkCreateDevice;
+
     // create logical device
     VkDeviceCreateInfo deviceCreateInfo = {};
     if (physicalDevice_->mainQueueIndex() == physicalDevice_->secondaryQueueIndex()) {
@@ -357,7 +689,7 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
         deviceCreateInfo.pNext = &features2;
         deviceCreateInfo.pEnabledFeatures = nullptr;
 
-        if (vkCreateDevice(physicalDevice_->vkPhysicalDevice(), &deviceCreateInfo, nullptr, &device_) != VK_SUCCESS) {
+        if (createDeviceFn(physicalDevice_->vkPhysicalDevice(), &deviceCreateInfo, nullptr, &device_) != VK_SUCCESS) {
             deviceCerr() << "Failed to create logical device!" << std::endl;
             exit(EXIT_FAILURE);
         }
@@ -382,13 +714,21 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
         deviceCreateInfo.pNext = &features2;
         deviceCreateInfo.pEnabledFeatures = nullptr;
 
-        if (vkCreateDevice(physicalDevice_->vkPhysicalDevice(), &deviceCreateInfo, nullptr, &device_) != VK_SUCCESS) {
+        if (createDeviceFn(physicalDevice_->vkPhysicalDevice(), &deviceCreateInfo, nullptr, &device_) != VK_SUCCESS) {
             deviceCerr() << "Failed to create logical device!" << std::endl;
             exit(EXIT_FAILURE);
         }
     }
 
     volkLoadDevice(device_);
+    // Keep all device entry points behind the interposer, including command hooks.
+    // Loading through its GDPA avoids a mixture of raw and wrapped device handles.
+    auto slGdpa = reinterpret_cast<PFN_vkGetDeviceProcAddr>(StreamlineContext::getVkGetDeviceProcAddr());
+    if (slGdpa) {
+        vkGetDeviceProcAddr = slGdpa;
+        volkLoadDevice(device_);
+    }
+    StreamlineContext::onDeviceCreated(physicalDevice_->vkPhysicalDevice());
 
 #ifdef DEBUG
     deviceCout() << "Logical device created successfully!" << std::endl;

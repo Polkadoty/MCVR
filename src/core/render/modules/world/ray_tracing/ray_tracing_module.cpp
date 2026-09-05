@@ -290,6 +290,10 @@ std::string RayTracingModule::getAttributes(const std::vector<std::string> &attr
     json result = json::object();
     result["attributes"] = json::array();
     result["translations"] = json::object();
+    result["load_error"] = loadResult.error;
+    result["requested_path"] = shaderPackPath;
+    result["resolved_path"] = loadResult.shaderPack.rootPath.string();
+    result["used_fallback"] = loadResult.success && !loadResult.error.empty();
     if (!loadResult.success) { return result.dump(); }
 
     for (const auto &attribute : loadResult.shaderPack.attributes) {

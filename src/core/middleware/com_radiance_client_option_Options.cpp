@@ -1,6 +1,7 @@
 #include "com_radiance_client_option_Options.h"
 
 #include "core/all_extern.hpp"
+#include "core/render/streamline_context.hpp"
 #include "core/render/buffers.hpp"
 #include "core/render/chunks.hpp"
 #include "core/render/render_framework.hpp"
@@ -65,4 +66,16 @@ JNIEXPORT void JNICALL Java_com_radiance_client_option_Options_nativeSetCollectC
             textures->releaseEmission();
         }
     }
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_option_Options_nativeSetFrameGenerationEnabled(JNIEnv *, jclass, jboolean enabled) {
+    Renderer::options.frameGenerationEnabled = enabled;
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_option_Options_nativeSetReflexEnabled(JNIEnv *, jclass, jboolean enabled) {
+    Renderer::options.reflexEnabled = enabled;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_radiance_client_option_Options_isFrameGenerationAvailable(JNIEnv *, jclass) {
+    return StreamlineContext::isDlssGSupported();
 }

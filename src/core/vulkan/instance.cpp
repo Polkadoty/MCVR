@@ -1,4 +1,6 @@
 #include "core/vulkan/instance.hpp"
+#include "core/render/streamline_context.hpp"
+#include "core/render/renderer.hpp"
 
 #include "core/render/modules/world/dlss/dlss_wrapper.hpp"
 #include "core/render/modules/world/xess_upscaler/xess_wrapper.hpp"
@@ -37,11 +39,19 @@ VkBool32 debugCallback(VkDebugReportFlagsEXT flags,
 }
 
 vk::Instance::Instance() {
+#ifdef _WIN32
+    // Optional, isolated plugin directory; initialize before the first Vulkan call.
+    const auto pluginPath = Renderer::folderPath / "streamline";
+    if (std::filesystem::exists(pluginPath / "sl.interposer.dll")) {
+        StreamlineContext::init(pluginPath.wstring().c_str());
+    }
+#endif
     GLFW_Init();
-
-    if (volkInitialize() != VK_SUCCESS) {
-        printf("volkInitialize failed!\n");
-        exit(EXIT_SUCCESS);
+    auto slGipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(StreamlineContext::getVkGetInstanceProcAddr());
+    if (slGipa) {
+        volkInitializeCustom(slGipa);
+    } else if (volkInitialize() != VK_SUCCESS) {
+        throw std::runtime_error("volkInitialize failed");
     }
 
     VkApplicationInfo appInfo = {};
@@ -115,6 +125,10 @@ vk::Instance::Instance() {
     }
 #endif
 
+    for (const auto &extension : StreamlineContext::getRequiredInstanceExtensions()) {
+        extStorage.insert(extension);
+    }
+
     // dynamic vertex input state ext
     // repeated for dlss, but make sure
     extStorage.insert(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
@@ -153,6 +167,10 @@ vk::Instance::Instance() {
         }
         return true;
     };
+
+    if (!areRequiredExtensionsSupported(StreamlineContext::getRequiredInstanceExtensions())) {
+        StreamlineContext::invalidateRequirements("Required Vulkan instance extension unavailable");
+    }
 
     dlssInstanceExtensionsCompatible_ =
         dlssRequirementQuerySuccess && areRequiredExtensionsSupported(dlssRequiredExtensions);

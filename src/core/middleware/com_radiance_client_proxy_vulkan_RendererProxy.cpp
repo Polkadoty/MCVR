@@ -121,18 +121,26 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_initR
                                                                                         jclass,
                                                                                         jobjectArray candidates,
                                                                                         jlong windowHandle) {
-    DYNLIB_HANDLE h = bind_handle_from_candidates(env, candidates);
-    if (!h) {
-        std::cerr << "[GLFW-Bind] Could not find already-loaded GLFW via NOLOAD/GetModuleHandle."
-                     " Ensure Java(LWJGL) loads GLFW before JNI and pass correct names/paths."
-                  << std::endl;
-        std::abort();
-    }
-    bind_symbols(h);
+    try {
+        DYNLIB_HANDLE h = bind_handle_from_candidates(env, candidates);
+        if (!h) {
+            std::cerr << "[GLFW-Bind] Could not find already-loaded GLFW via NOLOAD/GetModuleHandle."
+                         " Ensure Java(LWJGL) loads GLFW before JNI and pass correct names/paths."
+                      << std::endl;
+            std::abort();
+        }
+        bind_symbols(h);
 
-    GLFWwindow *window = (GLFWwindow *)(intptr_t)windowHandle;
-    Renderer::init(window);
-    Renderer::instance().framework()->acquireContext();
+        GLFWwindow *window = (GLFWwindow *)(intptr_t)windowHandle;
+        Renderer::init(window);
+        Renderer::instance().framework()->acquireContext();
+    } catch (const std::exception &error) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, error.what());
+    } catch (...) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unknown native initRenderer failure");
+    }
 }
 
 JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_maxSupportedTextureSize(JNIEnv *, jclass) {
@@ -140,16 +148,30 @@ JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_maxSu
     return maxImageSize;
 }
 
-JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_acquireContext(JNIEnv *, jclass) {
-    auto framework = Renderer::instance().framework();
-    if (framework == nullptr) return;
-    framework->acquireContext();
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_acquireContext(JNIEnv *env, jclass) {
+    try {
+        auto framework = Renderer::instance().framework();
+        if (framework != nullptr) framework->acquireContext();
+    } catch (const std::exception &error) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, error.what());
+    } catch (...) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unknown native acquireContext failure");
+    }
 }
 
-JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_submitCommand(JNIEnv *, jclass) {
-    auto framework = Renderer::instance().framework();
-    if (framework == nullptr) return;
-    framework->submitCommand();
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_submitCommand(JNIEnv *env, jclass) {
+    try {
+        auto framework = Renderer::instance().framework();
+        if (framework != nullptr) framework->submitCommand();
+    } catch (const std::exception &error) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, error.what());
+    } catch (...) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unknown native submitCommand failure");
+    }
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_present(JNIEnv *env, jclass) {
@@ -191,10 +213,18 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_postB
     pipelineContext->uiModuleContext->postBlur(6);
 }
 
-JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_close(JNIEnv *, jclass) {
-    auto framework = Renderer::instance().framework();
-    if (framework == nullptr) return;
-    Renderer::instance().close();
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_close(JNIEnv *env, jclass) {
+    try {
+        auto framework = Renderer::instance().framework();
+        if (framework == nullptr) return;
+        Renderer::instance().close();
+    } catch (const std::exception &error) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, error.what());
+    } catch (...) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unknown native close failure");
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -209,4 +239,8 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_takeS
     auto framework = Renderer::instance().framework();
     if (framework == nullptr) return;
     framework->takeScreenshot(withUI, width, height, channel, reinterpret_cast<void *>(pointer));
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_setFrameGenerationAllowed(JNIEnv *, jclass, jboolean allowed) {
+    Renderer::options.frameGenerationAllowed = allowed;
 }

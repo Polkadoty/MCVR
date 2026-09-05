@@ -17,11 +17,15 @@ struct UIModuleContext;
 
 class FrameResourceRetainer : public SharedObject<FrameResourceRetainer> {
   public:
-    FrameResourceRetainer(std::shared_ptr<Framework> framework);
+    explicit FrameResourceRetainer(uint32_t imageCount);
 
     template <typename T>
     void retain(std::shared_ptr<T> resource);
 
+    // Caller must drain every GPU queue and FG input completion before resetting.
+    // No previously submitted frame may still use any retained resource.
+    void resetAfterDeviceIdle(uint32_t imageCount);
+    // Caller must wait this frame slot's fence before releasing its retired resources.
     void beginFrame(uint32_t frameIndex);
 
   private:
@@ -140,6 +144,7 @@ class Framework : public SharedObject<Framework> {
     bool running_ = true;
     std::chrono::steady_clock::time_point frameLimitAnchor_{};
     uint32_t frameLimitFps_ = 0;
+    bool reflexPacedFrame_ = false;
 
     std::shared_ptr<FrameResourceRetainer> frameResourceRetainer_;
 };
@@ -149,7 +154,7 @@ void FrameResourceRetainer::retain(std::shared_ptr<T> resource) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
 
     if (resource != nullptr) {
-        retainedResourcesByFrame_[currentFrameIndex_].push_back(resource);
+        retainedResourcesByFrame_.at(currentFrameIndex_).push_back(resource);
 
 #ifdef DEBUG
         if constexpr (std::is_same_v<T, vk::DeviceLocalImage>) {

@@ -22,6 +22,9 @@ struct Options {
     uint32_t rayBounces = 4;
     uint32_t debugMode = 0;
     bool needRecreate = false;
+    bool frameGenerationEnabled = false;
+    bool frameGenerationAllowed = false;
+    bool reflexEnabled = false;
 
     uint32_t chunkBuildingBatchSize = 2;
     uint32_t chunkBuildingTotalBatches = 4;

@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -1724,6 +1725,8 @@ ShaderPackLoader::LoadResult ShaderPackLoader::load(const fs::path &path,
     }
 
     if (!path.empty() && requestedPath != fallbackPath) {
+        std::cerr << "[Radiance shaderpack] Failed to load requested pack " << requestedPath
+                  << ": " << result.error << "; trying built-in fallback " << fallbackPath << std::endl;
         if (auto fallback = tryLoad(fallbackPath); fallback.has_value()) {
             result.success = true;
             result.shaderPack = std::move(*fallback);

@@ -21,6 +21,8 @@ class Swapchain : public SharedObject<Swapchain> {
     ~Swapchain();
 
     void reconstruct();
+    // Requires GPU idle and release of every framework context referencing its images.
+    void releaseForRecreation();
     VkSwapchainKHR &vkSwapchain();
     VkExtent2D &vkExtent();
     VkExtent2D &vkMaxExtent();

@@ -1,0 +1,23 @@
+#version 460
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0, r16f) uniform readonly image2D linearDepth;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D deviceDepth;
+layout(push_constant) uniform DepthParameters {
+    // NDC z = (p22 * viewZ + p32) / (p23 * viewZ + p33).
+    vec4 projectionZ;
+    float farDepth;
+} parameters;
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(deviceDepth)))) return;
+    float depth = imageLoad(linearDepth, pixel).x;
+    float result = parameters.farDepth;
+    // 65504 is the renderer's sky/infinite-distance sentinel in its R16 buffer.
+    if (!isnan(depth) && !isinf(depth) && depth > 0.0 && depth < 65504.0) {
+        float viewZ = -depth;
+        float w = parameters.projectionZ.z * viewZ + parameters.projectionZ.w;
+        if (abs(w) > 1e-20)
+            result = clamp((parameters.projectionZ.x * viewZ + parameters.projectionZ.y) / w, 0.0, 1.0);
+    }
+    imageStore(deviceDepth, pixel, vec4(result));
+}
