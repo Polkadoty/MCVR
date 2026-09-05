@@ -101,7 +101,7 @@ void WorldPipeline::init(std::shared_ptr<Framework> framework, std::shared_ptr<P
         std::string error;
         if (!shaderPack->initialize(buildConfig, error)) {
             std::cerr << "[World Pipeline] Failed to load shared shader pack. Reason: " << error << std::endl;
-            throw std::runtime_error("failed to load shared shader pack");
+            throw std::runtime_error("failed to load shared shader pack: " + error);
         }
         shaderPack_ = shaderPack;
         break;

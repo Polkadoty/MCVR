@@ -152,10 +152,25 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_submi
     framework->submitCommand();
 }
 
-JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_present(JNIEnv *, jclass) {
-    auto framework = Renderer::instance().framework();
-    if (framework == nullptr) return;
-    framework->present();
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_present(JNIEnv *env, jclass) {
+    // C++ exceptions must not unwind across the JNI boundary. Keep the renderer's
+    // diagnostic in Minecraft's crash report, including pipeline rebuild failures.
+    try {
+        auto framework = Renderer::instance().framework();
+        if (framework == nullptr) return;
+        framework->present();
+    } catch (const std::exception &error) {
+        std::cerr << "[Radiance] Native present failed: " << error.what() << std::endl;
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) {
+            env->ThrowNew(exceptionClass, error.what());
+        }
+    } catch (...) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) {
+            env->ThrowNew(exceptionClass, "Unknown native exception while presenting Radiance frame");
+        }
+    }
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_fuseWorld(JNIEnv *, jclass) {

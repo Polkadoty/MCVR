@@ -6,6 +6,14 @@
 #include "core/render/renderer.hpp"
 
 #include <algorithm>
+#include <fstream>
+#include <stdexcept>
+
+static void recordDlssStatus(const std::string &message) {
+    std::cout << "[Radiance DLSS] " << message << std::endl;
+    std::ofstream status(Renderer::folderPath / "dlss-status.log", std::ios::app);
+    status << message << std::endl;
+}
 
 std::shared_ptr<NgxContext> DLSSModule::ngxContext_ = nullptr;
 
@@ -27,12 +35,17 @@ bool DLSSModule::initNGXContext() {
     ngxInitInfo.physicalDevice = framework->physicalDevice();
     ngxInitInfo.device = framework->device();
     ngxInitInfo.applicationPath = dlssPath.string();
-    if (ngxContext_->init(ngxInitInfo) != NVSDK_NGX_Result_Success) {
+    std::ofstream(Renderer::folderPath / "dlss-status.log", std::ios::trunc).close();
+    auto initResult = ngxContext_->init(ngxInitInfo);
+    recordDlssStatus("NGX initialization: " + getNGXResultString(initResult));
+    if (initResult != NVSDK_NGX_Result_Success) {
         ngxContext_ = nullptr;
         return false;
     }
 
-    if (ngxContext_->queryDlssRRAvailable() != NVSDK_NGX_Result_Success) {
+    auto availabilityResult = ngxContext_->queryDlssRRAvailable();
+    recordDlssStatus("Ray Reconstruction availability: " + getNGXResultString(availabilityResult));
+    if (availabilityResult != NVSDK_NGX_Result_Success) {
         ngxContext_->deinit();
         ngxContext_ = nullptr;
         return false;
@@ -236,7 +249,15 @@ void DLSSModule::build() {
     dlssRRInitInfo.inputSize = {inputWidth_, inputHeight_};
     dlssRRInitInfo.outputSize = {outputWidth_, outputHeight_};
     dlssRRInitInfo.quality = mode_;
-    ngxContext_->initDlssRR(dlssRRInitInfo, framework->mainCommandPool(), dlss_);
+    auto createResult = ngxContext_->initDlssRR(dlssRRInitInfo, framework->mainCommandPool(), dlss_);
+    lastEvaluationResult_.reset();
+    recordDlssStatus("Ray Reconstruction creation: " + getNGXResultString(createResult) +
+                     "; input=" + std::to_string(inputWidth_) + "x" + std::to_string(inputHeight_) +
+                     "; output=" + std::to_string(outputWidth_) + "x" + std::to_string(outputHeight_) +
+                     "; quality=" + std::to_string(static_cast<int>(mode_)));
+    if (createResult != NVSDK_NGX_Result_Success) {
+        throw std::runtime_error("DLSS Ray Reconstruction creation failed: " + getNGXResultString(createResult));
+    }
 
     auto firstHitDepthShader = vk::Shader::create(
         framework->device(), (Renderer::folderPath / "shaders/world/upscaler/upscale_first_hit_depth_comp.spv").string());
@@ -612,8 +633,13 @@ void DLSSModuleContext::render() {
         auto worldUBO = static_cast<vk::Data::WorldUBO *>(worldUBOBuffer->mappedPtr());
         if (worldUBO != nullptr) {
             glm::vec2 jitter = worldUBO->cameraJitter;
-            module->dlss_->denoise(worldCommandBuffer, glm::uvec2{module->inputWidth_, module->inputHeight_}, jitter,
-                                   worldUBO->cameraViewMat, worldUBO->cameraProjMat);
+            auto evaluationResult = module->dlss_->denoise(worldCommandBuffer,
+                glm::uvec2{module->inputWidth_, module->inputHeight_}, jitter,
+                worldUBO->cameraViewMat, worldUBO->cameraProjMat);
+            if (!module->lastEvaluationResult_.has_value() || *module->lastEvaluationResult_ != evaluationResult) {
+                recordDlssStatus("Ray Reconstruction evaluation: " + getNGXResultString(evaluationResult));
+                module->lastEvaluationResult_ = evaluationResult;
+            }
         }
     }
 

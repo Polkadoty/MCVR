@@ -1,6 +1,7 @@
 #include "core/render/entities.hpp"
 
 #include "core/render/buffers.hpp"
+#include "core/render/triangle_indices.hpp"
 #include "core/render/render_framework.hpp"
 #include "core/vulkan/vertex.hpp"
 #include "core/render/renderer.hpp"
@@ -765,41 +766,25 @@ void Entities::queueBuild(EntitiesBuildTask task) {
 
                     break;
                 }
+                case World::DrawMode::TRIANGLES:
                 case World::DrawMode::TRIANGLE_STRIP: {
-                    std::vector<vk::VertexFormat::PBRVertex> fixedVertices;
-                    for (int j = 2; j < task.vertexCounts[geometryIndex + i]; j += 2) {
-                        auto v0 = geometryVertices[j - 2];
-                        auto v1 = geometryVertices[j - 1];
-                        auto v2 = geometryVertices[j - 1];
-                        auto v3 = geometryVertices[j - 2];
-
-                        v3.pos = geometryVertices[j].pos;
-                        v2.pos = geometryVertices[j + 1].pos;
-                        fixedVertices.push_back(v0);
-                        fixedVertices.push_back(v1);
-                        fixedVertices.push_back(v2);
-                        fixedVertices.push_back(v3);
+                    // Dragon death rays use TRIANGLES. General strips can have
+                    // odd vertex counts; do not turn pairs into synthetic quads
+                    // or read j+1 past the end of the submitted vertex stream.
+                    auto mode = static_cast<World::DrawMode>(task.indexFormats[geometryIndex + i]);
+                    auto vertexCount = static_cast<uint32_t>(geometryVertices.size());
+                    if (mode == World::DrawMode::TRIANGLES) {
+                        entity_geometry::appendTriangleListIndices(geometryIndices, vertexCount);
+                    } else {
+                        entity_geometry::appendTriangleStripIndices(geometryIndices, vertexCount);
                     }
-                    geometryVertices = fixedVertices;
-                    for (int j = 0; j < geometryVertices.size(); j += 4) {
-                        geometryIndices.push_back(j + 0);
-                        geometryIndices.push_back(j + 1);
-                        geometryIndices.push_back(j + 2);
-                        geometryIndices.push_back(j + 2);
-                        geometryIndices.push_back(j + 3);
-                        geometryIndices.push_back(j + 0);
-
-                        geometryVertices[j + 0].coordinate = coordinate;
-                        geometryVertices[j + 1].coordinate = coordinate;
-                        geometryVertices[j + 2].coordinate = coordinate;
-                        geometryVertices[j + 3].coordinate = coordinate;
-
-                        if (post) {
-                            geometryVertices[j + 0].postBase = {x, y, z};
-                            geometryVertices[j + 1].postBase = {x, y, z};
-                            geometryVertices[j + 2].postBase = {x, y, z};
-                            geometryVertices[j + 3].postBase = {x, y, z};
+                    for (auto &vertex : geometryVertices) {
+                        if (task.normalOffset && vertex.useNorm) {
+                            vertex.pos += 0.00001f * glm::normalize(vertex.norm);
                         }
+                        vertex.coordinate = coordinate;
+                        if (post) { vertex.postBase = {x, y, z}; }
+                        if (vertex.useTexture) { textureIDs.insert(vertex.textureID); }
                     }
                     break;
                 }

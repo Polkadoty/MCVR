@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/shared.hpp"
+#include <optional>
 #include "common/singleton.hpp"
 #include "core/all_extern.hpp"
 #include "core/vulkan/all_core_vulkan.hpp"
@@ -63,6 +64,7 @@ class DLSSModule : public WorldModule, public SharedObject<DLSSModule> {
 
     // dlss
     std::shared_ptr<DlssRR> dlss_;
+    std::optional<NVSDK_NGX_Result> lastEvaluationResult_;
     NgxContext::SupportedSizes supportedSizes_{};
     NVSDK_NGX_PerfQuality_Value mode_ = NVSDK_NGX_PerfQuality_Value_Balanced;
 
