@@ -6,6 +6,8 @@
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
 
+#include <stdexcept>
+
 std::ostream &texturesCout() {
     return std::cout << "[Textures] ";
 }
@@ -58,6 +60,12 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
         exit(EXIT_FAILURE);
     }
 
+    if (textureIter->second != nullptr) {
+        // Upload regions are keyed by logical ID. Submit them against the old
+        // image before replacing that ID, then drain shader reads of descriptors
+        // that bindTexture updates across all frame slots.
+        prepareDescriptorReplacement();
+    }
     framework->frameResourceRetainer().retain(textures_[id]);
 #ifdef DEBUG
     if (textures_[id] != nullptr) { std::cout << "Textrue reinitialized: " << id << std::endl; }
@@ -92,7 +100,11 @@ void Textures::setSamplingMode(uint32_t id, VkFilter samplingMode, VkSamplerMipm
         texturesCerr() << "The given texture id: " << id << " is not allocated for sampler" << std::endl;
         exit(EXIT_FAILURE);
     }
-    if (samplers[id]->vkSamplingMode() != samplingMode) {
+    if (samplers[id]->vkSamplingMode() == samplingMode && samplers[id]->vkMipmapMode() == mipmapMode) {
+        return; // Avoid rewriting a descriptor that a pending frame may be using.
+    }
+    {
+        prepareDescriptorReplacement();
         VkSamplerAddressMode addressMode = samplers[id]->vkAddressMode();
 
         auto framework = Renderer::instance().framework();
@@ -113,7 +125,11 @@ void Textures::setAddressMode(uint32_t id, VkSamplerAddressMode addressMode) {
         texturesCerr() << "The given texture id: " << id << " is not allocated for sampler" << std::endl;
         exit(EXIT_FAILURE);
     }
-    if (samplers[id]->vkAddressMode() != addressMode) {
+    if (samplers[id]->vkAddressMode() == addressMode) {
+        return;
+    }
+    {
+        prepareDescriptorReplacement();
         VkFilter samplingMode = samplers[id]->vkSamplingMode();
         VkSamplerMipmapMode mipmapMode = samplers[id]->vkMipmapMode();
 
@@ -220,6 +236,20 @@ std::shared_ptr<vk::Fence> Textures::acquireUploadFence() {
     return vk::Fence::create(device);
 }
 
+void Textures::prepareDescriptorReplacement() {
+    // Caller holds mtx_ and the framework recreation lock on the render thread.
+    // Texture uploads and every draw consuming these arrays run on the main queue.
+    // UPDATE_AFTER_BIND does not permit replacing entries used by pending draws.
+    flushQueuedUploadImpl();
+    auto device = Renderer::instance().framework()->device();
+    const VkResult result = vkQueueWaitIdle(device->mainVkQueue());
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error("Texture descriptor replacement could not drain the render queue: "
+                                 + std::to_string(result));
+    }
+    collectCompletedUploadsImpl();
+}
+
 void Textures::collectCompletedUploadsImpl() {
     auto device = Renderer::instance().framework()->device();
     auto &batches = submittedUploadBatches_;
@@ -261,6 +291,8 @@ void Textures::flushQueuedUploadImpl() {
     auto mainQueueIndex = physicalDevice->mainQueueIndex();
 
     std::vector<vk::CommandBuffer::ImageMemoryBarrier> uploadPreImageBarriers, uploadPostImageBarriers;
+    std::vector<std::shared_ptr<vk::DeviceLocalImage>> destinationImages;
+    destinationImages.reserve(uploadQueue_->size());
 
     for (auto &entry : *uploadQueue_) {
         auto &textureId = entry.first;
@@ -270,11 +302,14 @@ void Textures::flushQueuedUploadImpl() {
             exit(EXIT_FAILURE);
         }
         auto texture = textureIter->second;
+        destinationImages.emplace_back(texture);
         uploadPreImageBarriers.push_back({
-            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            // Include preceding fragment, compute and ray-tracing texture reads
+            // before overwriting texels or performing the image layout transition.
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
             .oldLayout = texture->imageLayout(),
             .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             .srcQueueFamilyIndex = mainQueueIndex,
@@ -286,9 +321,9 @@ void Textures::flushQueuedUploadImpl() {
 
         uploadPostImageBarriers.push_back({
             .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
-                            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            // Ray-tracing reads are not covered by FRAGMENT or COMPUTE stages.
+            .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
             .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -323,10 +358,9 @@ void Textures::flushQueuedUploadImpl() {
         cmdBuffer->barriersBufferImage(
             {}, {{
                     .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
-                                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                    .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                     .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     .srcQueueFamilyIndex = mainQueueIndex,
@@ -357,6 +391,7 @@ void Textures::flushQueuedUploadImpl() {
         .fence = fence,
         .commandBuffer = cmdBuffer,
         .stagingBuffers = std::move(stagingBuffers),
+        .destinationImages = std::move(destinationImages),
     });
 
     framework->frameResourceRetainer().retain(uploadQueue_);

@@ -156,7 +156,7 @@ void Framework::init(GLFWwindow *window) {
     swapchain_ = vk::Swapchain::create(physicalDevice_, device_, window_);
     mainCommandPool_ = vk::CommandPool::create(physicalDevice_, device_);
     asyncCommandPool_ = vk::CommandPool::create(physicalDevice_, device_, physicalDevice_->secondaryQueueIndex());
-    frameResourceRetainer_ = FrameResourceRetainer::create(shared_from_this());
+    frameResourceRetainer_ = FrameResourceRetainer::create(swapchain_->imageCount());
 
     uint32_t imageCount = swapchain_->imageCount();
 
@@ -381,7 +381,8 @@ void Framework::recreate() {
         vk::Window::framebufferResized = false;
         pipeline_->isRecreationNeeded = false;
 
-        waitRenderQueueIdle();
+        const VkResult idleResult = vkDeviceWaitIdle(device_->vkDevice());
+        if (idleResult != VK_SUCCESS) { throw std::runtime_error("Swapchain recreation could not drain GPU work: " + std::to_string(idleResult)); }
 
         int width = 0, height = 0;
         GLFW_GetFramebufferSize(window_->window(), &width, &height);
@@ -391,6 +392,7 @@ void Framework::recreate() {
         }
 
         currentContextIndex_ = 0;
+        indexHistory_ = {}; // Previous swapchain indices cannot identify new screenshots.
         currentContext_ = nullptr;
         contexts_.clear();
 
@@ -402,6 +404,7 @@ void Framework::recreate() {
         commandProcessedSemaphores_.clear();
 
         swapchain_->reconstruct();
+        frameResourceRetainer_->resetAfterDeviceIdle(swapchain_->imageCount());
 
         uint32_t size = swapchain_->imageCount();
 
@@ -646,15 +649,4 @@ std::shared_ptr<vk::Semaphore> Framework::acquireSemaphore() {
 
 void Framework::recycleSemaphore(std::shared_ptr<vk::Semaphore> semaphore) {
     recycledImageAcquiredSemaphores_.push(semaphore);
-}
-
-FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framework) {
-    retainedResourcesByFrame_.resize(framework->swapchain_->imageCount());
-}
-
-void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
-    std::unique_lock<std::recursive_mutex> lck(mtx_);
-
-    currentFrameIndex_ = frameIndex;
-    retainedResourcesByFrame_[currentFrameIndex_].clear();
 }

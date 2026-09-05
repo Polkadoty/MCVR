@@ -17,7 +17,9 @@ struct UIModuleContext;
 
 class FrameResourceRetainer : public SharedObject<FrameResourceRetainer> {
   public:
-    FrameResourceRetainer(std::shared_ptr<Framework> framework);
+    explicit FrameResourceRetainer(uint32_t imageCount);
+    // Caller must drain all GPU queues before replacing frame slots.
+    void resetAfterDeviceIdle(uint32_t imageCount);
 
     template <typename T>
     void retain(std::shared_ptr<T> resource);
@@ -149,7 +151,7 @@ void FrameResourceRetainer::retain(std::shared_ptr<T> resource) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
 
     if (resource != nullptr) {
-        retainedResourcesByFrame_[currentFrameIndex_].push_back(resource);
+        retainedResourcesByFrame_.at(currentFrameIndex_).push_back(resource);
 
 #ifdef DEBUG
         if constexpr (std::is_same_v<T, vk::DeviceLocalImage>) {

@@ -22,6 +22,8 @@ class Textures : public SharedObject<Textures> {
         std::shared_ptr<vk::Fence> fence;
         std::shared_ptr<vk::CommandBuffer> commandBuffer;
         std::vector<std::shared_ptr<vk::HostVisibleBuffer>> stagingBuffers;
+        // A logical texture ID may be reinitialized while an upload is pending.
+        std::vector<std::shared_ptr<vk::DeviceLocalImage>> destinationImages;
     };
 
     Textures(std::shared_ptr<Framework> framework);
@@ -70,6 +72,7 @@ class Textures : public SharedObject<Textures> {
     std::shared_ptr<vk::HostVisibleBuffer> acquireUploadStagingBuffer(size_t minSize);
     std::shared_ptr<vk::Fence> acquireUploadFence();
     void collectCompletedUploadsImpl();
+    void prepareDescriptorReplacement();
     void flushQueuedUploadImpl();
 };
 

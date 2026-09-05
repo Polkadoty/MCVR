@@ -7,6 +7,7 @@
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
 #include "core/render/world.hpp"
+#include "core/render/persistent_scene_gpu.hpp"
 
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
@@ -319,6 +320,30 @@ void WorldPrepareContext::render() {
                 blasIndex++;
             }
         }
+    }
+
+    // Persistent reusable geometry. Separate IDs/history from transient entity hashes.
+    // prepare() records mesh copies and BLAS builds before this frame's TLAS build.
+    auto persistentFrame = persistent::prepare(Renderer::instance().world()->persistentScene(),
+        {cameraPos.x, cameraPos.y, cameraPos.z}, framework, worldCommandBuffer);
+    for (const auto& draw : persistentFrame->draws) {
+        const auto gpu = std::static_pointer_cast<persistent::GpuMesh>(draw.current.mesh->gpu);
+        const auto current = draw.current.transform.relativeTo(persistentFrame->camera);
+        VkTransformMatrixKHR transform{};
+        std::memcpy(transform.matrix, current.data(), sizeof(transform.matrix));
+        instanceBuilder.defineInstance(transform, blasIndex, 0x01, blasGroupAccu,
+            VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR, gpu->data->blas);
+        hitGroupNames.push_back("shadow"); hitGroupNames.push_back("default");
+        indexBufferAddrs.push_back(gpu->data->indexBufferAddresses[0]);
+        positionBufferAddrs.push_back(gpu->data->positionBufferAddresses[0]);
+        materialBufferAddrs.push_back(gpu->data->materialBufferAddresses[0]);
+        lastIndexBufferAddrs.push_back(draw.history ? gpu->data->indexBufferAddresses[0] : 0);
+        lastPositionBufferAddrs.push_back(draw.history ? gpu->data->positionBufferAddresses[0] : 0);
+        const auto previous = draw.previous.relativeTo(draw.previousCamera);
+        glm::mat4 previousMatrix(1.0f);
+        for (int r=0; r<3; ++r) for (int c=0; c<4; ++c) previousMatrix[c][r]=previous[r*4+c];
+        lastObjToWorldMats.push_back(previousMatrix);
+        blasOffset.push_back(blasAccu++); blasGroupAccu += 2; ++blasIndex;
     }
 
     // Chunk
