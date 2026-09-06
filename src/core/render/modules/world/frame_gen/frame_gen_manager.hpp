@@ -49,6 +49,8 @@ public:
     static bool shutdown();
     static bool isActive();
     static bool isAvailable();
+    static bool hasFailed();
+    static std::string statusText();
     static uint32_t maxFramesToGenerate();
     static std::string latencyDiagnostics();
 };

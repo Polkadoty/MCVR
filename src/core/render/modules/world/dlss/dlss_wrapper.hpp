@@ -138,6 +138,7 @@ class NgxContext : public SharedObject<NgxContext> {
     std::shared_ptr<vk::Device> device_;
     NVSDK_NGX_Parameter *ngxParams_ = nullptr;
     std::wstring applicationPath_;
+    bool ownsNgxShutdown_ = true;
 };
 
 

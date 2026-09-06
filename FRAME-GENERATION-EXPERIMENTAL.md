@@ -9,3 +9,19 @@ Do not treat this as the tested port release or install it into the user's ordin
 Streamline production plugins are external files under the instance's radiance/streamline directory. NVIDIA SR/RR libraries remain separate in radiance. No NVIDIA runtime DLLs are embedded in these JARs or committed to source. Hardware availability and successful rendering must be verified in runtime logs; plugin presence alone does not prove frame generation is working.
 
 Next runtime checks: baseline with plugins absent; plugins present/FG Off; world FG On and nonzero generated-frame counters; HUD/hand quality; pause/focus toggles; resize; resource reload; save/quit. Test in a separate client when the GPU is available.
+
+
+## FG.2 runtime checkpoint (2026-09-05)
+
+Pins Streamline to local production2.12 plugins, includes both RR and FG NGX
+search paths, and preserves Streamline ownership of device-wide NGX shutdown.
+Latched runtime failures now clear the Java toggle with a diagnostic tooltip.
+Frame-generation status requires actual generated presents and a valid
+completion timeline; activation alone is not reported as success.
+
+Full Windows native and NeoForge builds passed. A separate RTX4090 test
+confirmed Ray Reconstruction initialization, availability, creation and
+evaluation Success while FG reported status0, actuallyPresented2 and valid
+completion waits. This is not a measured performance multiplier or a claim
+of universal visual quality. Create/DH integration and complete shutdown
+stress testing remain separate. NVIDIA runtime binaries are not committed.

@@ -2,6 +2,7 @@
 
 #include "core/all_extern.hpp"
 #include "core/render/streamline_context.hpp"
+#include "core/render/modules/world/frame_gen/frame_gen_manager.hpp"
 #include "core/render/buffers.hpp"
 #include "core/render/chunks.hpp"
 #include "core/render/render_framework.hpp"
@@ -78,4 +79,12 @@ JNIEXPORT void JNICALL Java_com_radiance_client_option_Options_nativeSetReflexEn
 
 JNIEXPORT jboolean JNICALL Java_com_radiance_client_option_Options_isFrameGenerationAvailable(JNIEnv *, jclass) {
     return StreamlineContext::isDlssGSupported();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_com_radiance_client_option_Options_hasFrameGenerationFailure(JNIEnv *, jclass) {
+    return FrameGenManager::hasFailed();
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_radiance_client_option_Options_frameGenerationStatus(JNIEnv *env, jclass) {
+    try { return env->NewStringUTF(FrameGenManager::statusText().c_str()); }
+    catch (...) { return env->NewStringUTF("Frame generation status unavailable"); }
 }

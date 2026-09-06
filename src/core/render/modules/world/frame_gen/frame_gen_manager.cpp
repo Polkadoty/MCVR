@@ -25,7 +25,7 @@ struct Slot {
 std::vector<Slot> slots;
 std::shared_ptr<vk::ComputePipeline> depthPipeline;
 frame_gen::CameraHistory cameraHistory;
-bool initialized{}, supported{}, requested{}, active{}, needRecreate{}, recreating{}, faulted{};
+bool initialized{}, supported{}, requested{}, active{}, needRecreate{}, recreating{}, faulted{}, confirmed{};
 uint32_t maxFrames{}, frames{1}, minimumDimension{};
 uint64_t captured{}, waited{}, lastWaitUs{};
 uint32_t lastStatus{}, lastPresented{};
@@ -40,12 +40,14 @@ bool off() {
     if (!active) return true;
     if (!StreamlineContext::setDlssGOptions(sl::DLSSGMode::eOff)) return false;
     active = false;
+    confirmed = false;
     cameraHistory.reset();
     return true;
 }
 bool fail(const std::string &message) {
     note("Frame generation disabled: " + message);
     faulted = true;
+    confirmed = false;
     requested = false;
     needRecreate = true;
     // If Off itself fails, keep active=true so teardown cannot pretend success.
@@ -184,7 +186,8 @@ bool FrameGenManager::afterSwapchainRecreate() {
     if (!StreamlineContext::setReflexOptions(sl::ReflexMode::eLowLatency)
         || !StreamlineContext::setDlssGOptions(sl::DLSSGMode::eOn, frames)) return fail("activation failed");
     active = true;
-    note("DLSS-G On after swapchain recreation; generated frames=" + std::to_string(frames));
+    confirmed = false;
+    note("DLSS-G activation requested after swapchain recreation; awaiting successful generated presents");
     return true;
 }
 bool FrameGenManager::tagFrame(const FrameInput &input) {
@@ -238,9 +241,16 @@ bool FrameGenManager::captureInputCompletion(uint32_t frameSlot, const char *) {
     if (slot.completion != Completion::AwaitingPresent) return fail("invalid present/capture ordering");
     slot.completion = Completion::Unknown;
     sl::DLSSGState state{};
-    if (!StreamlineContext::getDlssGState(state) || !state.inputsProcessingCompletionFence
-        || !state.lastPresentInputsProcessingCompletionFenceValue)
-        return fail("no trustworthy DLSS-G input-completion timeline; device-idle recovery required");
+    if (!StreamlineContext::getDlssGState(state))
+        return fail("DLSS-G state query failed; device-idle recovery required. " + StreamlineContext::lastError());
+    // Capture the real result even when feature creation produced no timeline.
+    // Unknown inputs remain retained until explicit device-idle recovery.
+    lastStatus = static_cast<uint32_t>(state.status);
+    lastPresented = state.numFramesActuallyPresented;
+    if (!state.inputsProcessingCompletionFence || !state.lastPresentInputsProcessingCompletionFenceValue)
+        return fail("no trustworthy DLSS-G input-completion timeline; status=" + std::to_string(lastStatus)
+            + "; actuallyPresented=" + std::to_string(lastPresented)
+            + "; device-idle recovery required. " + StreamlineContext::lastError());
     slot.semaphore = reinterpret_cast<VkSemaphore>(state.inputsProcessingCompletionFence);
     slot.value = state.lastPresentInputsProcessingCompletionFenceValue;
     slot.completion = Completion::Timeline;
@@ -248,6 +258,10 @@ bool FrameGenManager::captureInputCompletion(uint32_t frameSlot, const char *) {
     lastStatus = static_cast<uint32_t>(state.status);
     lastPresented = state.numFramesActuallyPresented;
     if (lastStatus != 0) return fail("DLSS-G runtime status=" + std::to_string(lastStatus));
+    if (!confirmed && lastPresented > 1) {
+        confirmed = true;
+        note("DLSS-G generated presents confirmed; actuallyPresented=" + std::to_string(lastPresented));
+    }
     if (captured == 1 || captured % 300 == 0) {
         std::ofstream(Renderer::folderPath / "frame-generation-status.log", std::ios::app)
             << latencyDiagnostics() << std::endl;
@@ -284,16 +298,18 @@ bool FrameGenManager::drainAfterDeviceIdle(VkDevice device) {
 bool FrameGenManager::shutdown() {
     if (!off() || pending() || !StreamlineContext::clearResourceTags()) return false;
     slots.clear(); depthPipeline.reset(); cameraHistory.reset();
-    initialized = supported = requested = active = needRecreate = recreating = faulted = false;
+    initialized = supported = requested = active = needRecreate = recreating = faulted = confirmed = false;
     return true;
 }
 bool FrameGenManager::isActive() { return active; }
 bool FrameGenManager::isAvailable() { return supported && !faulted; }
+bool FrameGenManager::hasFailed() { return faulted; }
+std::string FrameGenManager::statusText() { return diagnostic; }
 uint32_t FrameGenManager::maxFramesToGenerate() { return maxFrames; }
 std::string FrameGenManager::latencyDiagnostics() {
     std::ostringstream out;
     out << "supported=" << supported << "; active=" << active << "; pending=" << pending()
-        << "; status=" << lastStatus << "; actuallyPresented=" << lastPresented
+        << "; confirmed=" << confirmed << "; status=" << lastStatus << "; actuallyPresented=" << lastPresented
         << "; captures=" << captured << "; waits=" << waited << "; lastWaitUs=" << lastWaitUs
         << "; " << diagnostic;
     return out.str();

@@ -1,3 +1,5 @@
+#include "core/render/streamline_context.hpp"
+#include <filesystem>
 /*
  * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
  *
@@ -130,6 +132,15 @@ NVSDK_NGX_Result NgxContext::init(const NgxInitInfo &initInfo) {
 #endif
 
     NVSDK_NGX_FeatureCommonInfo info = {};
+    const auto rendererDirectory = std::filesystem::path(applicationPath_).parent_path();
+    const auto rrPath = rendererDirectory.wstring();
+    const auto fgPath = (rendererDirectory / L"streamline").wstring();
+    const wchar_t *featurePaths[] = {rrPath.c_str(), fgPath.c_str()};
+    info.PathListInfo.Path = featurePaths;
+    info.PathListInfo.Length = 2;
+    // NGX shutdown is device-wide, not a reference-counted release of this wrapper.
+    // Capture ownership now; keep it stable through a later feature failure.
+    ownsNgxShutdown_ = !StreamlineContext::ownsNgxLifetime();
     // info.LoggingInfo.LoggingCallback     = &NGX_AppLogCallback;
     info.LoggingInfo.MinimumLoggingLevel = initInfo.loggingLevel;
 
@@ -156,7 +167,9 @@ NgxContext::~NgxContext() {
 
 void NgxContext::deinit() {
     if (ngxParams_) { NVSDK_NGX_VULKAN_DestroyParameters(ngxParams_); }
-    if (device_) { NVSDK_NGX_VULKAN_Shutdown1(device_->vkDevice()); }
+    if (device_ && ownsNgxShutdown_) { NVSDK_NGX_VULKAN_Shutdown1(device_->vkDevice()); }
+    // In shared mode slShutdown owns final NGX teardown, after RR resources close.
+    // Destroying this client's parameter object above is still always required.
 
     ngxParams_ = nullptr;
     device_ = nullptr;

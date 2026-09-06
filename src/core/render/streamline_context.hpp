@@ -19,6 +19,8 @@ public:
     static bool isReflexAvailable();
     static bool isDlssGSupported();
     static bool isDlssGLoaded();
+    // True while Streamline owns the initialized NGX device; direct RR must not shut it down.
+    static bool ownsNgxLifetime();
     static bool getDlssGCapabilities(uint32_t &maxGeneratedFrames, uint32_t &minimumDimension);
     static void invalidateRequirements(const std::string &reason);
     static void *getVkGetInstanceProcAddr();

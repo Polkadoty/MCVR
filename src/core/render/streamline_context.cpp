@@ -25,7 +25,8 @@ uint32_t frameIndex{}, graphicsQueues{}, computeQueues{}, opticalQueues{};
 uint32_t maxGeneratedFrames{}, minimumFGDimension{};
 sl::FrameToken *frameToken{};
 std::vector<std::string> instanceExtensions, deviceExtensions, features12, features13;
-std::wstring pluginDirectory;
+std::wstring pluginDirectory, rendererDirectory;
+std::string lastSdkError;
 std::ofstream logFile;
 std::mutex logMutex;
 std::string errorMessage;
@@ -56,7 +57,14 @@ bool resultOK(sl::Result result, const char *operation) {
     if (result == sl::Result::eOk) return true;
     return fail(std::string(operation) + " failed: " + std::to_string(static_cast<int>(result)));
 }
-void sdkLog(sl::LogType, const char *message) { if (message) log(message); }
+void sdkLog(sl::LogType type, const char *message) {
+    if (!message) return;
+    {
+        std::lock_guard lock(logMutex);
+        if (type == sl::LogType::eError) lastSdkError.assign(message, std::min<size_t>(std::char_traits<char>::length(message), 2048));
+    }
+    log(message);
+}
 void fgError(const sl::APIError &error) {
     // NVIDIA requires the callback to return immediately; no file IO/locks here.
     callbackError.store(error.vkRes ? error.vkRes : -1, std::memory_order_relaxed);
@@ -164,17 +172,25 @@ bool StreamlineContext::init(const wchar_t *path) {
         && core("slSetConstants", setConstantsSL) && core("slSetTagForFrame", setTags)
         && core("slSetFeatureLoaded", setLoaded);
     if (!loaded) { FreeLibrary(interposer); interposer = nullptr; return false; }
-    const wchar_t *pluginPaths[] = {pluginDirectory.c_str()};
+    // Streamline initializes process/device NGX first. Include the existing RR DLL
+    // directory as well as FG so the later direct RR client sees the same features.
+    rendererDirectory = directory.parent_path().wstring();
+    const wchar_t *pluginPaths[] = {pluginDirectory.c_str(), rendererDirectory.c_str()};
     const sl::Feature features[] = {sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS_G};
     sl::Preferences preferences{};
     preferences.renderAPI = sl::RenderAPI::eVulkan;
-    preferences.flags = preferences.flags | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    // Pin this experimental integration to its tested SDK. Default Preferences
+    // enable OTA AND cached-plugin loading; the failed run mixed 2.12 interposer
+    // with 2.14 plugins, including hooks this interposer does not implement.
+    preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking
+        | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    log("Pinned local Streamline SDK: OTA and cached SL plugin loading disabled; NGX search includes renderer directory");
     preferences.showConsole = false;
     preferences.logLevel = sl::LogLevel::eDefault;
     preferences.logMessageCallback = sdkLog;
     preferences.pathToLogsAndData = pluginDirectory.c_str();
     preferences.pathsToPlugins = pluginPaths;
-    preferences.numPathsToPlugins = 1;
+    preferences.numPathsToPlugins = 2;
     preferences.featuresToLoad = features;
     preferences.numFeaturesToLoad = 3;
     preferences.engine = sl::EngineType::eCustom;
@@ -239,6 +255,7 @@ bool StreamlineContext::isAvailable() { return initialized && deviceReady; }
 bool StreamlineContext::isReflexAvailable() { return isAvailable() && reflexSupported; }
 bool StreamlineContext::isDlssGSupported() { return isAvailable() && fgSupported; }
 bool StreamlineContext::isDlssGLoaded() { return fgLoaded; }
+bool StreamlineContext::ownsNgxLifetime() { return isAvailable() && fgSupported; }
 bool StreamlineContext::getDlssGCapabilities(uint32_t &maxFrames, uint32_t &minDimension) {
     maxFrames = maxGeneratedFrames; minDimension = minimumFGDimension;
     return isDlssGSupported() && maxFrames > 0;
@@ -315,7 +332,10 @@ bool StreamlineContext::advanceFrame() {
 }
 sl::FrameToken *StreamlineContext::getCurrentFrameToken() { return frameToken; }
 uint32_t StreamlineContext::getFrameIndex() { return frameIndex; }
-std::string StreamlineContext::lastError() { return errorMessage; }
+std::string StreamlineContext::lastError() {
+    std::lock_guard lock(logMutex);
+    return lastSdkError.empty() ? errorMessage : errorMessage + "; SDK: " + lastSdkError;
+}
 #else
 namespace { const std::vector<std::string> noRequirements; }
 bool StreamlineContext::init(const wchar_t *) { return false; }
@@ -326,6 +346,7 @@ bool StreamlineContext::isAvailable() { return false; }
 bool StreamlineContext::isReflexAvailable() { return false; }
 bool StreamlineContext::isDlssGSupported() { return false; }
 bool StreamlineContext::isDlssGLoaded() { return false; }
+bool StreamlineContext::ownsNgxLifetime() { return false; }
 bool StreamlineContext::getDlssGCapabilities(uint32_t &maxFrames, uint32_t &minDimension) { maxFrames = minDimension = 0; return false; }
 void StreamlineContext::invalidateRequirements(const std::string &) {}
 void *StreamlineContext::getVkGetInstanceProcAddr() { return nullptr; }
