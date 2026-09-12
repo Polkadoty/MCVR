@@ -2,6 +2,7 @@
 
 #include "common/shared.hpp"
 #include "common/singleton.hpp"
+#include "core/render/persistent_scene.hpp"
 #include "core/all_extern.hpp"
 #include "core/vulkan/all_core_vulkan.hpp"
 
@@ -12,6 +13,7 @@
 class Framework;
 class Chunks;
 class Entities;
+namespace radiance::dh { class LodScene; }
 
 class World : public SharedObject<World> {
   public:
@@ -68,6 +70,8 @@ class World : public SharedObject<World> {
 
     std::shared_ptr<Chunks> chunks();
     std::shared_ptr<Entities> entities();
+    persistent::Scene& persistentScene() { return persistentScene_; }
+    std::shared_ptr<radiance::dh::LodScene> lods();
 
     void setCameraPos(glm::dvec3 cameraPos);
     glm::dvec3 getCameraPos();
@@ -75,8 +79,10 @@ class World : public SharedObject<World> {
     void close();
 
   private:
+    persistent::Scene persistentScene_;
     std::shared_ptr<Chunks> chunks_;
     std::shared_ptr<Entities> entities_;
+    std::shared_ptr<radiance::dh::LodScene> lods_;
 
     glm::dvec3 cameraPos_ = {0, 0, 0};
 

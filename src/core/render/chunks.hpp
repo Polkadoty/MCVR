@@ -172,12 +172,13 @@ struct Chunk1 : public SharedObject<Chunk1> {
     constexpr static float D_PRIORITY_FLOOR = 0.4;
     constexpr static float D_WEIGHT = 1.1;
 
-    int x, y, z;
+    int x = 0, y = 0, z = 0;
     int64_t latestVersion = 0;
     std::chrono::steady_clock::time_point lastUpdate;
 
     std::shared_ptr<vk::BLAS> blas;
     int64_t blasVersion = -1;
+    bool terrainReady = false; // Completed normal section, including known-empty terrain.
     std::shared_ptr<std::vector<VkDeviceAddress>> indexBufferAddresses;
     std::shared_ptr<std::vector<VkDeviceAddress>> positionBufferAddresses;
     std::shared_ptr<std::vector<VkDeviceAddress>> materialBufferAddresses;

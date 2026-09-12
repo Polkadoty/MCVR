@@ -26,6 +26,8 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
     // enabled device extensions
     std::vector<const char *> enabledExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
         VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
         VK_KHR_SPIRV_1_4_EXTENSION_NAME,

@@ -4,14 +4,17 @@
 
 #include "core/render/buffers.hpp"
 #include "core/render/chunks.hpp"
+#include "core/render/compat/dh/lod_scene.hpp"
 #include "core/render/entities.hpp"
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
 
 World::World(std::shared_ptr<Framework> framework)
-    : chunks_(Chunks::create(framework)), entities_(Entities::create(framework)) {}
+    : chunks_(Chunks::create(framework)), entities_(Entities::create(framework)), lods_(radiance::dh::LodScene::create(framework)) {}
 
 void World::resetFrame() {}
+
+std::shared_ptr<radiance::dh::LodScene> World::lods() { return lods_; }
 
 bool &World::shouldRender() {
     return shouldRenderWorld_;
@@ -35,6 +38,8 @@ glm::dvec3 World::getCameraPos() {
 
 void World::close() {
     shouldRenderWorld_ = false;
+    persistentScene_.reset();
+    lods_->close();
     chunks_->close();
     entities_->close();
 }

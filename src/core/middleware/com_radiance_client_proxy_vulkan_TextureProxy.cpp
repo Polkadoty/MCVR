@@ -4,14 +4,49 @@
 #include "core/render/renderer.hpp"
 #include "core/render/textures.hpp"
 #include "texture_proxy_errors.hpp"
+#include <windows.h>
+#include <GL/gl.h>
+#include <stdexcept>
+
+namespace {
+// Selected once, before Minecraft allocates any texture identities. OpenGL owns
+// the numeric namespace; Vulkan reserves the same identity for its separate image.
+HGLRC hybridTextureContext = nullptr;
+}
 
 extern "C" {
-JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_generateTextureId(JNIEnv *, jclass) {
+JNIEXPORT void JNICALL Java_com_radiance_hybrid_NativeInterop_enableTextureNamespace(JNIEnv *env, jclass) {
+    texture_proxy::guardUpdate(env, [&] {
+        auto textures = Renderer::instance().textures();
+        if (!textures || !wglGetCurrentContext()) throw std::runtime_error("Hybrid texture namespace requires initialized Vulkan and current GL context");
+        std::scoped_lock lock(textures->mtx_);
+        if (hybridTextureContext) return;
+        if (!textures->textures_.empty()) throw std::runtime_error("Cannot switch texture namespace after texture allocation");
+        hybridTextureContext = wglGetCurrentContext();
+    });
+}
+
+JNIEXPORT jint JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_generateTextureId(JNIEnv *env, jclass) {
     auto textures = Renderer::instance().textures();
-    if (textures == nullptr)
-        return 0;
-    else
-        return textures->allocateTexture();
+    if (!hybridTextureContext) return textures ? textures->allocateTexture() : 0;
+    jint result = -1;
+    texture_proxy::guardUpdate(env, [&] {
+        if (!textures || wglGetCurrentContext() != hybridTextureContext)
+            throw std::runtime_error("Hybrid texture allocation outside owning GL context");
+        std::scoped_lock lock(textures->mtx_);
+        GLuint id = 0;
+        do {
+            glGenTextures(1, &id);
+            if (id == 0) throw std::runtime_error("OpenGL texture name allocation failed");
+            // The existing native registry does not release logical identities.
+            // Keep any recycled GL names reserved until context destruction so
+            // they cannot alias an older Vulkan texture still referenced by meshes.
+        } while (textures->textures_.contains(id));
+        textures->textures_.emplace(id, nullptr);
+        textures->samplers.emplace(id, nullptr);
+        result = static_cast<jint>(id);
+    });
+    return result;
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_prepareImage(

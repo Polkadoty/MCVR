@@ -1082,6 +1082,7 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
 
     if (chunkBuildData->version > blasVersion) {
         blasVersion = chunkBuildData->version;
+        terrainReady = true;
         x = chunkBuildData->x;
         y = chunkBuildData->y;
         z = chunkBuildData->z;
@@ -1139,6 +1140,7 @@ void Chunk1::invalidate() {
     lastUpdate = std::chrono::steady_clock::now();
 
     blasVersion = latestVersion++;
+    terrainReady = false;
 
     frr.retain(blas);
     blas = nullptr;

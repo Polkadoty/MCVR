@@ -2,13 +2,18 @@
 
 #include "core/render/buffers.hpp"
 #include "core/render/chunks.hpp"
+#include "core/render/compat/dh/lod_scene.hpp"
+#include "core/render/compat/dh/near_coverage.hpp"
 #include "core/render/entities.hpp"
 #include "core/render/modules/world/ray_tracing/ray_tracing_module.hpp"
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
 #include "core/render/world.hpp"
+#include "core/render/persistent_scene_gpu.hpp"
 
 #include <filesystem>
+#include <fstream>
+#include <chrono>
 #include <glm/gtc/type_ptr.hpp>
 
 WorldPrepare::WorldPrepare() {}
@@ -92,6 +97,7 @@ void WorldPrepareContext::uploadBuffer(std::vector<uint32_t> &blasOffsets,
     lastObjToWorldMat->uploadToStagingBuffer(lastObjToWorldMats.data());
 
     std::vector<std::shared_ptr<vk::DeviceLocalBuffer>> rayTracingMetaData{{
+        dhNearCoverageBuffer,
         blasOffsetsBuffer,
         indexBufferAddr,
         positionBufferAddr,
@@ -166,6 +172,9 @@ void WorldPrepareContext::render() {
     }
 
     if (entities->blasBatchBuilder() != nullptr) { entities->blasBatchBuilder()->submit(worldCommandBuffer); }
+
+    auto lods = Renderer::instance().world()->lods();
+    lods->process(worldCommandBuffer);
 
     worldCommandBuffer->barriersMemory({vk::CommandBuffer::MemoryBarrier{
         .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
@@ -321,6 +330,64 @@ void WorldPrepareContext::render() {
         }
     }
 
+    // Persistent reusable geometry. Separate IDs/history from transient entity hashes.
+    // prepare() records mesh copies and BLAS builds before this frame's TLAS build.
+    auto persistentFrame = persistent::prepare(Renderer::instance().world()->persistentScene(),
+        {cameraPos.x, cameraPos.y, cameraPos.z}, framework, worldCommandBuffer);
+    for (const auto& draw : persistentFrame->draws) {
+        const auto gpu = std::static_pointer_cast<persistent::GpuMesh>(draw.current.mesh->gpu);
+        const auto current = draw.current.transform.relativeTo(persistentFrame->camera);
+        VkTransformMatrixKHR transform{};
+        std::memcpy(transform.matrix, current.data(), sizeof(transform.matrix));
+        instanceBuilder.defineInstance(transform, blasIndex, 0x01, blasGroupAccu,
+            VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR, gpu->data->blas);
+        hitGroupNames.push_back("shadow"); hitGroupNames.push_back("default");
+        indexBufferAddrs.push_back(gpu->data->indexBufferAddresses[0]);
+        positionBufferAddrs.push_back(gpu->data->positionBufferAddresses[0]);
+        materialBufferAddrs.push_back(gpu->data->materialBufferAddresses[0]);
+        lastIndexBufferAddrs.push_back(draw.history ? gpu->data->indexBufferAddresses[0] : 0);
+        lastPositionBufferAddrs.push_back(draw.history ? gpu->data->positionBufferAddresses[0] : 0);
+        const auto previous = draw.previous.relativeTo(draw.previousCamera);
+        glm::mat4 previousMatrix(1.0f);
+        for (int r=0; r<3; ++r) for (int c=0; c<4; ++c) previousMatrix[c][r]=previous[r*4+c];
+        lastObjToWorldMats.push_back(previousMatrix);
+        blasOffset.push_back(blasAccu++); blasGroupAccu += 2; ++blasIndex;
+    }
+    // Same-frame ready coverage: only completed normal sections suppress overlapping LODs.
+    // Coordinate tags protect against toroidal slot reuse while flying/teleporting.
+    const auto grid = chunks->chunkGridInfo();
+    auto coverage = radiance::dh::emptyCoverage({grid.x, grid.y, grid.z, grid.w});
+    size_t readyCount = 0, emptyCount = 0, collisions = 0, invalidBlas = 0;
+    for (const auto& chunk : chunks->chunks()) {
+        if (!chunk->terrainReady) { invalidBlas += chunk->blas != nullptr; continue; }
+        ++readyCount; emptyCount += chunk->blas == nullptr;
+        const int x = chunk->x / 16, y = chunk->y / 16, z = chunk->z / 16;
+        if (grid.x > 0 && grid.z > 0 && y >= grid.w && y < grid.w + grid.y) {
+            const auto& old = coverage[radiance::dh::coverageIndex(coverage[0], x, y, z)];
+            if (old[3] && old != radiance::dh::CoverageCell{x,y,z,1}) ++collisions;
+        }
+        radiance::dh::markCoverage(coverage, x, y, z, true);
+    }
+    // Bounded test diagnostics: exact CPU publication used by this frame's TLAS.
+    // No world/database data; one overwritten terrain-readiness snapshot every 5 seconds.
+    static auto nextCoverageReport = std::chrono::steady_clock::time_point{};
+    const auto reportNow = std::chrono::steady_clock::now();
+    if (reportNow >= nextCoverageReport) {
+        nextCoverageReport = reportNow + std::chrono::seconds(5);
+        std::ofstream report("radiance/dh-coverage.csv", std::ios::trunc);
+        if (report) {
+            report << "camera," << cameraPos.x << ',' << cameraPos.y << ',' << cameraPos.z << '\n'
+                   << "grid," << grid.x << ',' << grid.y << ',' << grid.z << ',' << grid.w << '\n'
+                   << "ready,empty,collisions,blasWithoutReady\n" << readyCount << ',' << emptyCount
+                   << ',' << collisions << ',' << invalidBlas << "\nx,y,z,ready\n";
+            for (size_t i=1; i<coverage.size(); ++i) if (coverage[i][3])
+                report << coverage[i][0] << ',' << coverage[i][1] << ',' << coverage[i][2] << ",1\n";
+        }
+    }
+    dhNearCoverageBuffer = vk::DeviceLocalBuffer::create(vma, device,
+        coverage.size() * sizeof(radiance::dh::CoverageCell), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    dhNearCoverageBuffer->uploadToStagingBuffer(coverage.data());
+
     // Chunk
     {
         auto &chunk1s = chunks->chunks();
@@ -371,6 +438,36 @@ void WorldPrepareContext::render() {
         }
     }
 
+    // Distant Horizons: independent immutable LOD BLASes, never vanilla chunk slot IDs.
+    for (const auto& section : lods->snapshot()) {
+        for (const auto& part : section->parts) {
+            if (!part->blas) continue;
+            VkTransformMatrixKHR transform = {
+                1, 0, 0, static_cast<float>(static_cast<double>(part->x) - cameraPos.x),
+                0, 1, 0, static_cast<float>(static_cast<double>(part->y) - cameraPos.y),
+                0, 0, 1, static_cast<float>(static_cast<double>(part->z) - cameraPos.z)};
+            instanceBuilder.defineInstance(transform, blasIndex, 0x01, blasGroupAccu, 0, part->blas);
+            const bool dhWater = !part->geometryGroupNames.empty() && part->geometryGroupNames[0] == "radiance_dh_water";
+            hitGroupNames.push_back(dhWater ? "radiance_dh_water_shadow" : "radiance_dh_shadow");
+            for (uint32_t j = 0; j < part->geometryCount; ++j) {
+                hitGroupNames.push_back(dhWater ? "radiance_dh_water" : "radiance_dh");
+                indexBufferAddrs.push_back(part->indexBufferAddresses[j]);
+                positionBufferAddrs.push_back(part->positionBufferAddresses[j]);
+                materialBufferAddrs.push_back(part->materialBufferAddresses[j]);
+                lastIndexBufferAddrs.push_back(0);
+                lastPositionBufferAddrs.push_back(0);
+            }
+            lastObjToWorldMats.push_back(glm::transpose(glm::mat4(
+                glm::vec4(1,0,0,transform.matrix[0][3]),
+                glm::vec4(0,1,0,transform.matrix[1][3]),
+                glm::vec4(0,0,1,transform.matrix[2][3]), glm::vec4(0,0,0,1))));
+            blasOffset.push_back(blasAccu);
+            blasAccu += part->geometryCount;
+            blasGroupAccu += part->geometryCount + 1;
+            ++blasIndex;
+        }
+    }
+
     if (instanceBuilder.instances.empty()) {
         tlas = nullptr;
         return;
@@ -409,6 +506,8 @@ void WorldPrepareContext::setupHitGroupSbt(const std::unordered_map<std::string,
         }
 
         auto iter = hitGroupNameToIndex.find(groupName);
+        if (groupName.starts_with("radiance_dh") && iter == hitGroupNameToIndex.end())
+            throw std::runtime_error("Active shaderpack lacks required Radiance DH hit groups");
         hitGroupIndices.push_back(iter == hitGroupNameToIndex.end() ? fallbackHitGroupIndex : iter->second);
     }
 

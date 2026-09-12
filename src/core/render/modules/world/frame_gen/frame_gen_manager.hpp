@@ -22,9 +22,10 @@ public:
     };
 
     static bool init(); // after StreamlineContext::onDeviceCreated; Off by default
-    // enabled is user intent AND runtime gate (world, focus, no menus/pause).
+    // enabled is persistent user intent; temporary menu/focus gates never unload the plugin.
     // Returns whether framework must recreate before the next enabled frame.
     static bool configure(bool enabled, uint32_t generatedFrames = 1);
+    static bool setRuntimeAllowed(bool allowed);
     static bool needsSwapchainRecreate();
     // Drain GPU/SL inputs before destroying a swapchain. Returns false on failure.
     static bool beforeSwapchainRecreate();

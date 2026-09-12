@@ -51,6 +51,7 @@ struct WorldPrepareContext : public SharedObject<WorldPrepareContext> {
     std::shared_ptr<vk::TLAS> tlas;
     std::shared_ptr<vk::TLASBuilder> tlasBuilder;
 
+    std::shared_ptr<vk::DeviceLocalBuffer> dhNearCoverageBuffer;
     std::shared_ptr<vk::DeviceLocalBuffer> blasOffsetsBuffer;
     std::shared_ptr<vk::DeviceLocalBuffer> indexBufferAddr;
     std::shared_ptr<vk::DeviceLocalBuffer> positionBufferAddr;

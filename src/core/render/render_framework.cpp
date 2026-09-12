@@ -292,7 +292,8 @@ void Framework::submitCommand() {
     const bool fgAllowed = Renderer::options.frameGenerationEnabled && Renderer::options.frameGenerationAllowed
         && Renderer::instance().world()->shouldRender() && !vk::Window::framebufferResized
         && !pipeline_->isRecreationNeeded && !Renderer::options.needRecreate;
-    FrameGenManager::configure(fgAllowed, 1);
+    FrameGenManager::configure(Renderer::options.frameGenerationEnabled, 1);
+    FrameGenManager::setRuntimeAllowed(fgAllowed);
 
     Renderer::instance().textures()->performQueuedUpload();
     Renderer::instance().buffers()->performQueuedUpload();
@@ -374,14 +375,18 @@ void Framework::present() {
 #ifdef _WIN32
     StreamlineContext::pclSetMarker(sl::PCLMarker::ePresentEnd);
 #endif
-    if (!FrameGenManager::captureInputCompletion(currentContext_->frameIndex)) {
-        FrameGenManager::configure(false);
+    bool invalidated = result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
+        || StreamlineContext::hasSwapchainInvalidation();
+    bool captured = !invalidated && FrameGenManager::captureInputCompletion(currentContext_->frameIndex);
+    invalidated = invalidated || StreamlineContext::hasSwapchainInvalidation();
+    if (!captured || invalidated) {
+        if (!invalidated) FrameGenManager::configure(false);
         if (!FrameGenManager::drainAfterDeviceIdle(device_->vkDevice())) {
             throw std::runtime_error("Unable to drain frame generation inputs after present");
         }
     }
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || vk::Window::framebufferResized ||
+    if (invalidated || vk::Window::framebufferResized ||
         Renderer::options.needRecreate || pipeline_->isRecreationNeeded || FrameGenManager::needsSwapchainRecreate()) {
         recreate();
         return;
@@ -479,6 +484,7 @@ void Framework::recreate() {
                 throw std::runtime_error("Frame generation plugin transition failed");
             }
         }
+        StreamlineContext::clearSwapchainInvalidation();
         swapchain_->reconstruct();
 
         uint32_t size = swapchain_->imageCount();

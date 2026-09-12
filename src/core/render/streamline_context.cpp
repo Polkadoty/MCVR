@@ -1,5 +1,6 @@
 // Streamline integration adapted from PEQHUB/MCVR 8e1a148 (GPL-3.0).
 #include "core/render/streamline_context.hpp"
+#include <vulkan/vulkan_core.h>
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
@@ -31,6 +32,7 @@ std::ofstream logFile;
 std::mutex logMutex;
 std::string errorMessage;
 std::atomic<int> callbackError{};
+std::atomic<bool> swapchainInvalidated{};
 
 PFun_slInit *initSL{};
 PFun_slShutdown *shutdownSL{};
@@ -67,6 +69,10 @@ void sdkLog(sl::LogType type, const char *message) {
 }
 void fgError(const sl::APIError &error) {
     // NVIDIA requires the callback to return immediately; no file IO/locks here.
+    if (error.vkRes == VK_ERROR_OUT_OF_DATE_KHR || error.vkRes == VK_SUBOPTIMAL_KHR) {
+        swapchainInvalidated.store(true, std::memory_order_relaxed);
+        return;
+    }
     callbackError.store(error.vkRes ? error.vkRes : -1, std::memory_order_relaxed);
 }
 bool checkCallback() {
@@ -298,6 +304,12 @@ bool StreamlineContext::getDlssGState(sl::DLSSGState &state) {
     return isAvailable() && fgLoaded && stateFG && checkCallback()
         && resultOK(stateFG(sl::ViewportHandle(0), state, nullptr), "slDLSSGGetState");
 }
+bool StreamlineContext::hasSwapchainInvalidation() {
+    return swapchainInvalidated.load(std::memory_order_relaxed);
+}
+void StreamlineContext::clearSwapchainInvalidation() {
+    swapchainInvalidated.store(false, std::memory_order_relaxed);
+}
 bool StreamlineContext::setConstants(const sl::Constants &constants) {
     return isAvailable() && frameToken && resultOK(setConstantsSL(constants, *frameToken, sl::ViewportHandle(0)), "slSetConstants");
 }
@@ -365,6 +377,8 @@ bool StreamlineContext::getReflexState(sl::ReflexState &) { return false; }
 bool StreamlineContext::pclSetMarker(sl::PCLMarker) { return false; }
 bool StreamlineContext::setDlssGOptions(sl::DLSSGMode, uint32_t) { return false; }
 bool StreamlineContext::getDlssGState(sl::DLSSGState &) { return false; }
+bool StreamlineContext::hasSwapchainInvalidation() { return false; }
+void StreamlineContext::clearSwapchainInvalidation() {}
 bool StreamlineContext::setConstants(const sl::Constants &) { return false; }
 bool StreamlineContext::tagResources(const sl::ResourceTag *, uint32_t, void *) { return false; }
 bool StreamlineContext::clearResourceTags() { return true; }

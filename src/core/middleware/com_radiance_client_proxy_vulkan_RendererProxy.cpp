@@ -1,3 +1,4 @@
+#include "core/middleware/jni_frame_guard.hpp"
 #include "com_radiance_client_proxy_vulkan_RendererProxy.h"
 
 #include "core/all_extern.hpp"
@@ -162,16 +163,10 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_acqui
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_submitCommand(JNIEnv *env, jclass) {
-    try {
+    radiance::guardedSubmitCommand(env, [] {
         auto framework = Renderer::instance().framework();
         if (framework != nullptr) framework->submitCommand();
-    } catch (const std::exception &error) {
-        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
-        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, error.what());
-    } catch (...) {
-        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
-        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unknown native submitCommand failure");
-    }
+    });
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_present(JNIEnv *env, jclass) {

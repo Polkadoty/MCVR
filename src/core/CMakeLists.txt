@@ -74,6 +74,9 @@ if(MCVR_ENABLE_XESS)
     endif()
 endif()
 if(MSVC)
+    # The Windows hybrid HUD transport owns a real WGL context and shared GL
+    # textures. These entry points are required even though presentation is Vulkan.
+    target_link_libraries(core PRIVATE opengl32)
     target_compile_definitions(core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(core PRIVATE /utf-8)
 endif()

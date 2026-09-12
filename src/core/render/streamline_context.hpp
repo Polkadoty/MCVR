@@ -39,6 +39,8 @@ public:
     static bool pclSetMarker(sl::PCLMarker marker);
     static bool setDlssGOptions(sl::DLSSGMode mode, uint32_t generatedFrames = 1);
     static bool getDlssGState(sl::DLSSGState &state);
+    static bool hasSwapchainInvalidation();
+    static void clearSwapchainInvalidation();
     static bool setConstants(const sl::Constants &constants);
     static bool tagResources(const sl::ResourceTag *tags, uint32_t count, void *commandBuffer = nullptr);
     static bool clearResourceTags();

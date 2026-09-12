@@ -512,6 +512,12 @@ void RayTracingModule::initDescriptorTables() {
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .stageFlags = runtimeTextureStageFlags,
+            })
+            .defineDescriptorLayoutSetBinding({
+                .binding = 10,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
             });
         set1Bindings.endDescriptorLayoutSetBinding();
         set1.endDescriptorLayoutSet();
@@ -1876,6 +1882,7 @@ void RayTracingModuleContext::render() {
         rayTracingDescriptorTable->bindBuffer(worldPrepareContext->lastPositionBufferAddr, 1, 6);
         rayTracingDescriptorTable->bindBuffer(buffers->textureMappingBuffer(), 1, 7);
         rayTracingDescriptorTable->bindBuffer(worldPrepareContext->lastObjToWorldMat, 1, 8);
+        rayTracingDescriptorTable->bindBuffer(worldPrepareContext->dhNearCoverageBuffer, 1, 10);
     }
 
     RayTracingModule::ExecutionVariables variables;

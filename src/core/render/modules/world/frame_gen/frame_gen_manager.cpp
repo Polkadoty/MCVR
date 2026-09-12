@@ -26,6 +26,7 @@ std::vector<Slot> slots;
 std::shared_ptr<vk::ComputePipeline> depthPipeline;
 frame_gen::CameraHistory cameraHistory;
 bool initialized{}, supported{}, requested{}, active{}, needRecreate{}, recreating{}, faulted{}, confirmed{};
+bool runtimeAllowed{};
 uint32_t maxFrames{}, frames{1}, minimumDimension{};
 uint64_t captured{}, waited{}, lastWaitUs{};
 uint32_t lastStatus{}, lastPresented{};
@@ -161,6 +162,27 @@ bool FrameGenManager::configure(bool enabled, uint32_t generatedFrames) {
     return needRecreate;
 }
 bool FrameGenManager::needsSwapchainRecreate() { return needRecreate; }
+bool FrameGenManager::setRuntimeAllowed(bool allowed) {
+    runtimeAllowed = allowed;
+    if (needRecreate || recreating || faulted || !requested) return true;
+    if (!allowed) {
+        if (!active) return true;
+        // Off retains resources and input-completion timelines. Ordinary slot
+        // reuse still waits on those timelines, including while menus render.
+        if (!off()) return fail("temporary suspension failed");
+        note("DLSS-G suspended for menu/focus; swapchain and resources retained");
+        return true;
+    }
+    if (active) return true;
+    if (!StreamlineContext::setReflexOptions(sl::ReflexMode::eLowLatency)
+        || !StreamlineContext::setDlssGOptions(sl::DLSSGMode::eOn, frames))
+        return fail("resume failed");
+    cameraHistory.reset();
+    active = true;
+    confirmed = false;
+    note("DLSS-G resumed without swapchain recreation; awaiting generated presents");
+    return true;
+}
 bool FrameGenManager::beforeSwapchainRecreate() {
     recreating = true;
     if (!off()) return fail("DLSS-G refused Off before swapchain teardown");
@@ -181,7 +203,7 @@ bool FrameGenManager::prepareNewSwapchain() {
 bool FrameGenManager::afterSwapchainRecreate() {
     recreating = false;
     needRecreate = false;
-    if (!requested || !supported || faulted) return true;
+    if (!requested || !supported || faulted || !runtimeAllowed) return true;
     // Reflex is mandatory while FG is On, even when its separate user toggle is Off.
     if (!StreamlineContext::setReflexOptions(sl::ReflexMode::eLowLatency)
         || !StreamlineContext::setDlssGOptions(sl::DLSSGMode::eOn, frames)) return fail("activation failed");
@@ -241,7 +263,12 @@ bool FrameGenManager::captureInputCompletion(uint32_t frameSlot, const char *) {
     if (slot.completion != Completion::AwaitingPresent) return fail("invalid present/capture ordering");
     slot.completion = Completion::Unknown;
     sl::DLSSGState state{};
-    if (!StreamlineContext::getDlssGState(state))
+    if (StreamlineContext::hasSwapchainInvalidation()) return false;
+    bool queried = StreamlineContext::getDlssGState(state);
+    // A resized/out-of-date async presentation is recoverable. The framework
+    // drains unknown inputs and recreates the swapchain before reusing them.
+    if (StreamlineContext::hasSwapchainInvalidation()) return false;
+    if (!queried)
         return fail("DLSS-G state query failed; device-idle recovery required. " + StreamlineContext::lastError());
     // Capture the real result even when feature creation produced no timeline.
     // Unknown inputs remain retained until explicit device-idle recovery.
@@ -299,6 +326,7 @@ bool FrameGenManager::shutdown() {
     if (!off() || pending() || !StreamlineContext::clearResourceTags()) return false;
     slots.clear(); depthPipeline.reset(); cameraHistory.reset();
     initialized = supported = requested = active = needRecreate = recreating = faulted = confirmed = false;
+    runtimeAllowed = false;
     return true;
 }
 bool FrameGenManager::isActive() { return active; }
