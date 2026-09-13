@@ -7,6 +7,7 @@
 
 #include <array>
 #include <map>
+#include <optional>
 #include <unordered_map>
 
 class Framework;
@@ -26,6 +27,7 @@ struct GraphicsPipelineShaders {
 struct OverlayDynamicDrawShaderInfo {
     std::string key;
     uint32_t vertexFormatType;
+    std::optional<vk::VertexLayoutInfo> explicitVertexLayout;
     uint32_t drawMode;
     uint32_t uniformSize;
     std::string vertexShaderPath;
@@ -71,7 +73,8 @@ class UIModule : public SharedObject<UIModule> {
                                        uint32_t uniformSize,
                                        const std::string &vertexShaderPath,
                                        const std::string &fragmentShaderPath,
-                                       const std::unordered_map<std::string, std::string> &definitions);
+                                       const std::unordered_map<std::string, std::string> &definitions,
+                                       const vk::VertexLayoutInfo *explicitLayout = nullptr);
     const OverlayDynamicDrawShaderInfo &overlayDrawShaderInfo(uint32_t shaderId) const;
 
     void bindTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image, int index);

@@ -435,7 +435,8 @@ void Pipeline::recreate(std::shared_ptr<Framework> framework) {
                                              shaderInfo.drawMode, shaderInfo.uniformSize,
                                              shaderInfo.vertexShaderPath,
                                              shaderInfo.fragmentShaderPath,
-                                             shaderInfo.definitions);
+                                             shaderInfo.definitions,
+                                             shaderInfo.explicitVertexLayout ? &*shaderInfo.explicitVertexLayout : nullptr);
     }
 
     if (worldPipeline_ != nullptr)

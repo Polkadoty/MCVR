@@ -61,7 +61,8 @@ uint32_t UIModule::registerOverlayDrawShader(const std::string &key,
                                              uint32_t uniformSize,
                                              const std::string &vertexShaderPath,
                                              const std::string &fragmentShaderPath,
-                                             const std::unordered_map<std::string, std::string> &definitions) {
+                                             const std::unordered_map<std::string, std::string> &definitions,
+                                             const vk::VertexLayoutInfo *explicitLayout) {
     enum class OverlayAttributeNumericKind {
         FLOAT,
         SINT,
@@ -144,7 +145,7 @@ uint32_t UIModule::registerOverlayDrawShader(const std::string &key,
     };
     auto makeOverlayVertexLayout = [&](uint32_t overlayVertexFormatType,
                                        const std::string &overlayVertexShaderPath) -> vk::VertexLayoutInfo {
-        vk::VertexLayoutInfo layout = overlayVertexLayoutFor(overlayVertexFormatType);
+        vk::VertexLayoutInfo layout = explicitLayout ? *explicitLayout : overlayVertexLayoutFor(overlayVertexFormatType);
         std::unordered_map<uint32_t, OverlayAttributeType> inputs = parseOverlayVertexInputs(overlayVertexShaderPath);
 
         for (VkVertexInputAttributeDescription &attribute : layout.attributeDescriptions) {
@@ -171,6 +172,7 @@ uint32_t UIModule::registerOverlayDrawShader(const std::string &key,
     OverlayDynamicDrawShaderInfo info{};
     info.key = key;
     info.vertexFormatType = vertexFormatType;
+    if (explicitLayout != nullptr) info.explicitVertexLayout = *explicitLayout;
     info.drawMode = drawMode;
     info.uniformSize = uniformSize;
     info.vertexShaderPath = vertexShaderPath;
